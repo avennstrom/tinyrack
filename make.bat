@@ -49,13 +49,13 @@ if "!sources!"=="" (
 
 echo Building...
 
-cl.exe /nologo /Zi /O2 /W4 /WX /EHsc ^
+cl.exe /nologo /Zi /Od /W4 /WX /EHsc ^
     %sources% ^
     /Fe:"tinyrack.exe" ^
     /Fo:"obj\\" ^
     /MD ^
     /D_CRT_SECURE_NO_WARNINGS ^
-    /DNDEBUG ^
+    /D_DEBUG ^
     /Iraylib/include ^
     user32.lib gdi32.lib kernel32.lib dsound.lib dxguid.lib Shell32.lib Winmm.lib ^
     raylib/raylib.lib
