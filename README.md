@@ -15,3 +15,9 @@ Run the make.bat script to build the project.
 $ cmd
 $ make
 ```
+
+TODO:
+* cmake?
+* VST?
+* more modules
+* better UX
