@@ -7,14 +7,6 @@ if "%1" == "debug" set DEBUG=1
 
 set "VCVARS="
 for %%e in (Enterprise Professional Community) do (
-    if exist "C:\Program Files\Microsoft Visual Studio\2022\%%e\VC\Auxiliary\Build\vcvars64.bat" (
-        set "VCVARS=C:\Program Files\Microsoft Visual Studio\2022\%%e\VC\Auxiliary\Build\vcvars64.bat"
-        goto :found_vs
-    )
-    if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\%%e\VC\Auxiliary\Build\vcvars64.bat" (
-        set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\%%e\VC\Auxiliary\Build\vcvars64.bat"
-        goto :found_vs
-    )
     if exist "C:\Program Files\Microsoft Visual Studio\2019\%%e\VC\Auxiliary\Build\vcvars64.bat" (
         set "VCVARS=C:\Program Files\Microsoft Visual Studio\2019\%%e\VC\Auxiliary\Build\vcvars64.bat"
         goto :found_vs
