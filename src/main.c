@@ -525,30 +525,6 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
 
 void rack_init(rack_t* rack)
 {
-    // tr_gui_module_t* vco0 = tr_rack_create_module(rack, TR_VCO);
-    // vco0->x = 20;
-    // vco0->y = 20;
-
-    // tr_gui_module_t* clock0 = tr_rack_create_module(rack, TR_CLOCK);
-    // clock0->x = 140;
-    // clock0->y = 20;
-
-    // tr_gui_module_t* adsr0 = tr_rack_create_module(rack, TR_ADSR);
-    // adsr0->x = 260;
-    // adsr0->y = 20;
-
-    // tr_gui_module_t* seq0 = tr_rack_create_module(rack, TR_SEQ8);
-    // seq0->x = 20;
-    // seq0->y = 140;
-
-    // tr_gui_module_t* lp0 = tr_rack_create_module(rack, TR_LP);
-    // lp0->x = 290;
-    // lp0->y = 260;
-
-    // tr_gui_module_t* quantizer0 = tr_rack_create_module(rack, TR_QUANTIZER);
-    // quantizer0->x = 20;
-    // quantizer0->y = 260;
-    
     tr_gui_module_t* speaker0 = tr_rack_create_module(rack, TR_SPEAKER);
     speaker0->x = WIDTH / 2;
     speaker0->y = HEIGHT / 2;
@@ -1009,11 +985,11 @@ int main()
             uint32_t flood_mask_1[TR_GUI_MODULE_COUNT / 32];
             tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
             size_t update_count = 0;
-            size_t total_update_count = 0;
 
             memset(flood_mask_0, 0, sizeof(flood_mask_0));
             memset(flood_mask_1, 0, sizeof(flood_mask_1));
 
+            // Find root modules (modules that have no connected inputs i.e. no dependencies)
             for (size_t i = 0; i < rack->gui_module_count; ++i)
             {
                 tr_gui_module_t* module = &rack->gui_modules[i];
@@ -1063,20 +1039,18 @@ int main()
                 }
             }
 
-            total_update_count += update_count;
-            tr_update_modules(rack, update_modules, update_count);
-            update_count = 0;
-
-            while (total_update_count != rack->gui_module_count)
+            while (update_count != rack->gui_module_count)
             {
                 memcpy(flood_mask_0, flood_mask_1, sizeof(flood_mask_0));
 
+                // Find modules whose dependencies are all updated
                 for (size_t i = 0; i < rack->gui_module_count; ++i)
                 {
                     tr_gui_module_t* module = &rack->gui_modules[i];
 
                     if (flood_mask_0[i / 32] & (1 << (i % 32)))
                     {
+                        // already updated
                         continue;
                     }
                     
@@ -1124,11 +1098,9 @@ int main()
                         update_modules[update_count++] = module;
                     }
                 }
-
-                total_update_count += update_count;
-                tr_update_modules(rack, update_modules, update_count);
-                update_count = 0;
             }
+
+            tr_update_modules(rack, update_modules, update_count);
 
             tr_gui_module_t* speaker = NULL;
             for (size_t i = 0; i < rack->gui_module_count; ++i)
