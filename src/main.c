@@ -44,6 +44,7 @@ enum tr_module_type
     TR_QUANTIZER,
     TR_RANDOM,
     TR_SPEAKER,
+    TR_SCOPE,
 
     TR_MODULE_COUNT,
 };
@@ -431,6 +432,11 @@ typedef struct tr_speaker
     const float* in_audio;
 } tr_speaker_t;
 
+typedef struct tr_scope
+{
+    const float* in_0;
+} tr_scope_t;
+
 //
 // GUI
 //
@@ -453,6 +459,7 @@ RACK_MODULE_POOL(tr_noise);
 RACK_MODULE_POOL(tr_quantizer);
 RACK_MODULE_POOL(tr_random);
 RACK_MODULE_POOL(tr_speaker);
+RACK_MODULE_POOL(tr_scope);
 
 typedef struct tr_gui_module
 {
@@ -499,6 +506,7 @@ typedef struct rack
     tr_quantizer_pool_t quantizer;
     tr_random_pool_t random;
     tr_speaker_pool_t speaker;
+    tr_scope_pool_t scope;
     
     tr_gui_module_t gui_modules[TR_GUI_MODULE_COUNT];
     size_t gui_module_count;
@@ -519,6 +527,7 @@ size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
         case TR_QUANTIZER: return rack->quantizer.count++;
         case TR_RANDOM: return rack->random.count++;
         case TR_SPEAKER: return rack->speaker.count++;
+        case TR_SCOPE: return rack->scope.count++;
     }
     assert(0);
     return (size_t)-1;
@@ -569,6 +578,7 @@ tr_gui_modinfo_t g_tr_gui_modinfo[TR_MODULE_COUNT] = {
     [TR_SPEAKER] = {"speaker"},
     [TR_NOISE] = {"noise"},
     [TR_RANDOM] = {"random"},
+    [TR_SCOPE] = {"scope"},
 };
 
 typedef struct tr_cable_draw_command
@@ -782,7 +792,7 @@ void tr_gui_plug_input(const float** value, int x, int y)
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
             .to = {(float)plug.x, (float)plug.y},
-            .color = input_plug.color,
+            .color = ColorAlpha(input_plug.color, 0.65f),
         };
     }
 }
@@ -955,6 +965,40 @@ void tr_speaker_draw(tr_speaker_t* speaker, tr_gui_module_t* module)
     tr_gui_module_end();
 }
 
+void tr_scope_draw(tr_scope_t* scope, tr_gui_module_t* module)
+{
+    tr_gui_module_begin(module, 200, 220);
+    tr_gui_plug_input(&scope->in_0, module->x + TR_PLUG_RADIUS + 8, module->y + 220 - TR_PLUG_RADIUS - 8);
+    
+    const int screen_x = module->x + 8;
+    const int screen_y = module->y + 28;
+    const int screen_w = 200 - 8*2;
+    const int screen_h = 140;
+    DrawRectangle(screen_x, screen_y, screen_w, screen_h, BLACK);
+
+    if (scope->in_0 != NULL)
+    {
+        for (int i = 0; i < TR_SAMPLE_COUNT - 1; ++i)
+        {
+            const float s0 = scope->in_0[i];
+            const float s1 = scope->in_0[i + 1];
+
+            const float r0 = Clamp((s0 + 1.0f) * 0.5f, 0.0f, 1.0f);
+            const float r1 = Clamp((s1 + 1.0f) * 0.5f, 0.0f, 1.0f);
+            
+            const float x0 = ((i + 0) / (float)TR_SAMPLE_COUNT) * screen_w + screen_x;
+            const float x1 = ((i + 1) / (float)TR_SAMPLE_COUNT) * screen_w + screen_x;
+            
+            const float y0 = r0 * screen_h + screen_y;
+            const float y1 = r1 * screen_h + screen_y;
+
+            DrawLineEx((Vector2){x0, y0}, (Vector2){x1, y1}, 1.0f, YELLOW);
+        }
+    }
+
+    tr_gui_module_end();
+}
+
 void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
 {
     switch (module->type)
@@ -970,6 +1014,7 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
         case TR_QUANTIZER: tr_quantizer_draw(&rack->quantizer.elements[module->index], module); break;
         case TR_RANDOM: tr_random_draw(&rack->random.elements[module->index], module); break;
         case TR_SPEAKER: tr_speaker_draw(&rack->speaker.elements[module->index], module); break;
+        case TR_SCOPE: tr_scope_draw(&rack->scope.elements[module->index], module); break;
     }
 }
 
@@ -1179,10 +1224,15 @@ int main()
         {
             const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
             DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
+            //DrawLineBezier(draw->from, draw->to, 6.0f, draw->color);
         }
 
         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
         {
+            if (g_input.drag_input != NULL)
+            {
+                *g_input.drag_input = NULL;
+            }
             g_input.active_value = NULL;
             g_input.drag_module = NULL;
             g_input.drag_input = NULL;
