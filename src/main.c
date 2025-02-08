@@ -22,6 +22,8 @@
 #define WIDTH 1280
 #define HEIGHT 720
 
+#define tr_countof(_Array) (sizeof(_Array) / sizeof(_Array[0]))
+
 typedef float tr_buf[TR_SAMPLE_COUNT];
 
 float tr_hz(float voct)
@@ -461,17 +463,28 @@ typedef struct tr_gui_module
 
 #define TR_GUI_MODULE_COUNT 1024
 
-typedef struct tr_plug
+typedef struct tr_output_plug
 {
     int x, y;
     const tr_gui_module_t* module;
-} tr_plug_t;
+} tr_output_plug_t;
 
-typedef struct tr_plug_kv
+typedef struct tr_output_plug_kv
 {
     const float* key;
-    tr_plug_t value;
-} tr_plug_kv_t;
+    tr_output_plug_t value;
+} tr_output_plug_kv_t;
+
+typedef struct tr_input_plug
+{
+    Color color;
+} tr_input_plug_t;
+
+typedef struct tr_input_plug_kv
+{
+    const float** key;
+    tr_input_plug_t value;
+} tr_input_plug_kv_t;
 
 typedef struct rack
 {
@@ -542,32 +555,43 @@ static void final_mix(int16_t* samples, const float* buffer)
 typedef struct tr_gui_modinfo
 {
     const char* name;
-    int width;
-    int height;
 } tr_gui_modinfo_t;
 
 tr_gui_modinfo_t g_tr_gui_modinfo[TR_MODULE_COUNT] = {
-    [TR_VCO] = {"vco", 100, 200},
-    [TR_VCA] = {"vca", 200, 100},
-    [TR_CLOCK] = {"clock", 100, 100},
-    [TR_SEQ8] = {"seq8", 400, 100},
-    [TR_ADSR] = {"adsr", 200, 100},
-    [TR_LP] = {"lp", 250, 100},
-    [TR_QUANTIZER] = {"quantizer", 250, 100},
-    [TR_MIXER] = {"mixer", 250, 100},
-    [TR_SPEAKER] = {"speaker", 100, 100},
-    [TR_NOISE] = {"noise", 100, 100},
-    [TR_RANDOM] = {"random", 100, 100},
+    [TR_VCO] = {"vco"},
+    [TR_VCA] = {"vca"},
+    [TR_CLOCK] = {"clock"},
+    [TR_SEQ8] = {"seq8"},
+    [TR_ADSR] = {"adsr"},
+    [TR_LP] = {"lp"},
+    [TR_QUANTIZER] = {"quantizer"},
+    [TR_MIXER] = {"mixer"},
+    [TR_SPEAKER] = {"speaker"},
+    [TR_NOISE] = {"noise"},
+    [TR_RANDOM] = {"random"},
 };
+
+typedef struct tr_cable_draw_command
+{
+    Vector2 from;
+    Vector2 to;
+    Color color;
+} tr_cable_draw_command_t;
 
 typedef struct tr_gui_input
 {
     void* active_value;
     float active_int; // for int knob
     tr_gui_module_t* drag_module;
-    const float** drag_plug;
-    tr_plug_kv_t* plugs;
+    const float** drag_input;
+    const float* drag_output;
+    Color drag_color;
+    tr_output_plug_kv_t* output_plugs;
+    tr_input_plug_kv_t* input_plugs;
     tr_gui_module_t* draw_module;
+
+    tr_cable_draw_command_t cable_draws[1024];
+    size_t cable_draw_count;
 } tr_gui_input_t;
 
 static tr_gui_input_t g_input;
@@ -578,17 +602,36 @@ static tr_gui_input_t g_input;
 #define TR_PLUG_PADDING (4)
 #define TR_MODULE_PADDING (2)
 
-void tr_gui_module_begin(tr_gui_module_t* module)
+#define TR_PLUG_HIGHLIGHT_COLOR (GetColor(0xe0780fff))
+
+static const Color g_cable_colors[] = 
+{
+    { 253, 249, 0, 255 },     // Yellow
+    { 255, 203, 0, 255 },     // Gold
+    { 255, 161, 0, 255 },     // Orange
+    { 255, 109, 194, 255 },   // Pink
+    { 230, 41, 55, 255 },     // Red
+    { 190, 33, 55, 255 },     // Maroon
+    { 0, 228, 48, 255 },      // Green
+    { 0, 158, 47, 255 },      // Lime
+    { 102, 191, 255, 255 },   // Sky Blue
+    { 200, 122, 255, 255 },   // Purple
+    { 135, 60, 190, 255 },    // Violet
+    { 211, 176, 131, 255 },   // Beige
+};
+
+void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
 {
     g_input.draw_module = module;
 
     const tr_gui_modinfo_t* modinfo = &g_tr_gui_modinfo[module->type];
-    DrawRectangle(module->x, module->y, modinfo->width, modinfo->height, GRAY);
+
+    DrawRectangle(module->x, module->y, width, height, GRAY);
     DrawRectangle(
         module->x + TR_MODULE_PADDING, 
         module->y + TR_MODULE_PADDING, 
-        modinfo->width - TR_MODULE_PADDING * 2,
-        modinfo->height - TR_MODULE_PADDING * 2,
+        width - TR_MODULE_PADDING * 2,
+        height - TR_MODULE_PADDING * 2,
         DARKGRAY);
 
     DrawText(
@@ -603,7 +646,7 @@ void tr_gui_module_begin(tr_gui_module_t* module)
         const Vector2 mouse = GetMousePosition();
         if (mouse.x > module->x &&
             mouse.y > module->y &&
-            mouse.x < module->x + modinfo->width && 
+            mouse.x < module->x + width && 
             mouse.y < module->y + 20)
         {
             g_input.drag_module = module;
@@ -686,56 +729,111 @@ void tr_gui_knob_int(int* value, int min, int max, int x, int y)
 
 void tr_gui_plug_input(const float** value, int x, int y)
 {
-    (void)value;
-    
-    const bool dim = g_input.drag_plug != NULL && g_input.drag_plug != value;
+    const bool highlight = g_input.drag_output != NULL;
 
     DrawCircle(x, y, TR_PLUG_RADIUS, LIGHTGRAY);
-    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, dim ? LIGHTGRAY : DARKGRAY);
+
+    Color inner_color = DARKGRAY;
+    if (highlight)
+    {
+        inner_color = TR_PLUG_HIGHLIGHT_COLOR;
+    }
+    if (*value != NULL)
+    {
+        inner_color = hmget(g_input.input_plugs, value).color;
+    }
+    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
     
     const Vector2 center = {(float)x, (float)y};
+
+    if (g_input.drag_output != NULL && 
+        IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
+        Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
+    {
+        *value = g_input.drag_output;
+        g_input.drag_output = NULL;
+
+        const tr_input_plug_t plug = {g_input.drag_color};
+        hmput(g_input.input_plugs, value, plug);
+    }
+
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
         if (Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
         {
-            g_input.drag_plug = value;
+            g_input.drag_input = value;
+            g_input.drag_color = g_cable_colors[rand() % tr_countof(g_cable_colors)];
         }
     }
 
-    if (g_input.drag_plug == value)
+    if (g_input.drag_input == value)
     {
-        DrawLineEx(center, GetMousePosition(), 8.0f, ORANGE);
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = GetMousePosition(),
+            .color = g_input.drag_color,
+        };
     }
 
     if (*value != NULL)
     {
-        const tr_plug_t plug = hmget(g_input.plugs, *value);
-        DrawLineEx(center, (Vector2){(float)plug.x, (float)plug.y}, 8.0f, RED);
+        const tr_output_plug_t plug = hmget(g_input.output_plugs, *value);
+        const tr_input_plug_t input_plug = hmget(g_input.input_plugs, value);
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = {(float)plug.x, (float)plug.y},
+            .color = input_plug.color,
+        };
     }
 }
 
 void tr_gui_plug_output(const float* buffer, int x, int y)
 {
+    const bool highlight = g_input.drag_input != NULL;
+    
+    const int rw = TR_PLUG_RADIUS + 2;
+    DrawRectangle(x - rw, y - rw, 2 * rw, 2 * rw, WHITE);
     DrawCircle(x, y, TR_PLUG_RADIUS, LIGHTGRAY);
-    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, DARKGRAY);
+    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, highlight ? TR_PLUG_HIGHLIGHT_COLOR : DARKGRAY);
 
     const Vector2 center = {(float)x, (float)y};
-    if (g_input.drag_plug != NULL && 
+    if (g_input.drag_input != NULL && 
         IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
         Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
     {
-        *g_input.drag_plug = buffer;
-        g_input.drag_plug = NULL;
+        const tr_input_plug_t plug = {g_input.drag_color};
+        hmput(g_input.input_plugs, g_input.drag_input, plug);
+
+        *g_input.drag_input = buffer;
+        g_input.drag_input = NULL;
+    }
+    
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        if (Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
+        {
+            g_input.drag_output = buffer;
+            g_input.drag_color = g_cable_colors[rand() % tr_countof(g_cable_colors)];
+        }
     }
 
-    const tr_plug_t plug = {x, y, g_input.draw_module};
-    hmput(g_input.plugs, buffer, plug);
+    if (g_input.drag_output == buffer)
+    {
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = GetMousePosition(),
+            .color = g_input.drag_color,
+        };
+    }
+
+    const tr_output_plug_t plug = {x, y, g_input.draw_module};
+    hmput(g_input.output_plugs, buffer, plug);
 }
 
 void tr_vco_draw(tr_vco_t* vco, tr_gui_module_t* module)
 {
     assert(module->type == TR_VCO);
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 100, 200);
     tr_gui_knob(&vco->in_v0, 20.0f, 1000.0f, module->x + 24, module->y + 50);
     tr_gui_plug_input(&vco->in_voct, module->x + 20, module->y + 80);
     tr_gui_plug_output(vco->out_sin, module->x + 70, module->y + 50);
@@ -746,7 +844,7 @@ void tr_vco_draw(tr_vco_t* vco, tr_gui_module_t* module)
 
 void tr_clock_draw(tr_clock_t* clock, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 100, 100);
     tr_gui_knob(&clock->in_hz, 0.01f, 50.0f, module->x + 24, module->y + 50);
     tr_gui_plug_output(clock->out_gate, module->x + 70, module->y + 50);
     tr_gui_module_end();
@@ -754,7 +852,7 @@ void tr_clock_draw(tr_clock_t* clock, tr_gui_module_t* module)
 
 void tr_seq8_draw(tr_seq8_t* seq8, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 400, 100);
     for (int i = 0; i < 8; ++i)
     {
         const int kx = module->x + 50 + (i * (TR_KNOB_RADIUS*2 + 4));
@@ -769,7 +867,7 @@ void tr_seq8_draw(tr_seq8_t* seq8, tr_gui_module_t* module)
 
 void tr_adsr_draw(tr_adsr_t* adsr, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 200, 100);
     const int x = module->x;
     const int y = module->y;
     tr_gui_knob(&adsr->in_attack, 0.001f, 1.0f, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
@@ -783,7 +881,7 @@ void tr_adsr_draw(tr_adsr_t* adsr, tr_gui_module_t* module)
 
 void tr_vca_draw(tr_vca_t* vca, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 200, 100);
     const int x = module->x;
     const int y = module->y;
     tr_gui_plug_input(&vca->in_audio, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
@@ -794,7 +892,7 @@ void tr_vca_draw(tr_vca_t* vca, tr_gui_module_t* module)
 
 void tr_lp_draw(tr_lp_t* lp, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 250, 100);
     const int x = module->x;
     const int y = module->y;
     tr_gui_knob(&lp->in_cut0, 0.0f, 1.0f, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
@@ -807,7 +905,7 @@ void tr_lp_draw(tr_lp_t* lp, tr_gui_module_t* module)
 
 void tr_mixer_draw(tr_mixer_t* mixer, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 250, 100);
     const int x = module->x;
     const int y = module->y;
     tr_gui_knob(&mixer->in_vol0, 0.0f, 1.0f, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
@@ -824,14 +922,14 @@ void tr_mixer_draw(tr_mixer_t* mixer, tr_gui_module_t* module)
 
 void tr_noise_draw(tr_noise_t* noise, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 100, 100);
     tr_gui_plug_output(noise->out_white, module->x + 24, module->y + 50);
     tr_gui_module_end();
 }
 
 void tr_random_draw(tr_random_t* random, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 100, 100);
     tr_gui_knob(&random->in_speed, 0.0f, 10.0f, module->x + 24, module->y + 50);
     tr_gui_plug_output(random->out_cv, module->x + 80, module->y + 50);
     tr_gui_module_end();
@@ -839,7 +937,7 @@ void tr_random_draw(tr_random_t* random, tr_gui_module_t* module)
 
 void tr_quantizer_draw(tr_quantizer_t* quantizer, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 250, 100);
     const int x = module->x;
     const int y = module->y;
     const int kx = x + 24;
@@ -852,7 +950,7 @@ void tr_quantizer_draw(tr_quantizer_t* quantizer, tr_gui_module_t* module)
 
 void tr_speaker_draw(tr_speaker_t* speaker, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module);
+    tr_gui_module_begin(module, 100, 100);
     tr_gui_plug_input(&speaker->in_audio, module->x + 40, module->y + 50);
     tr_gui_module_end();
 }
@@ -899,25 +997,160 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
     }
 }
 
-bool is_input_updated(rack_t* rack, const float* buffer, const uint32_t* flood_mask)
+bool is_input_updated(const rack_t* rack, const float* buffer, const uint32_t* flood_mask)
 {
     if (buffer == NULL)
     {
         return true;
     }
 
-    const tr_plug_t plug = hmget(g_input.plugs, buffer);
+    const tr_output_plug_t plug = hmget(g_input.output_plugs, buffer);
     const ptrdiff_t parent = plug.module - rack->gui_modules;
     return (flood_mask[parent / 32] & (1 << (parent % 32))) != 0;
+}
+
+void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const tr_gui_module_t* module)
+{
+    *count = 0;
+
+    switch (module->type)
+    {
+        case TR_VCO:
+            const tr_vco_t* vco = &rack->vco.elements[module->index];
+            inputs[(*count)++] = vco->in_voct;
+            break;
+        case TR_SEQ8:
+            const tr_seq8_t* seq8 = &rack->seq8.elements[module->index];
+            inputs[(*count)++] = seq8->in_step;
+            break;
+        case TR_SPEAKER:
+            const tr_speaker_t* speaker = &rack->speaker.elements[module->index];
+            inputs[(*count)++] = speaker->in_audio;
+            break;
+        case TR_QUANTIZER:
+            const tr_quantizer_t* quantizer = &rack->quantizer.elements[module->index];
+            inputs[(*count)++] = quantizer->in_cv;
+            break;
+        case TR_LP:
+            const tr_lp_t* lp = &rack->lp.elements[module->index];
+            inputs[(*count)++] = lp->in_audio;
+            inputs[(*count)++] = lp->in_cut;
+            break;
+        case TR_ADSR:
+            const tr_adsr_t* adsr = &rack->adsr.elements[module->index];
+            inputs[(*count)++] = adsr->in_gate;
+            break;
+        case TR_MIXER:
+            const tr_mixer_t* mixer = &rack->mixer.elements[module->index];
+            inputs[(*count)++] = mixer->in_0;
+            inputs[(*count)++] = mixer->in_1;
+            inputs[(*count)++] = mixer->in_2;
+            inputs[(*count)++] = mixer->in_3;
+            break;
+    }
+}
+
+void tr_produce_final_mix(int16_t* output, rack_t* rack)
+{
+    uint32_t flood_mask_0[TR_GUI_MODULE_COUNT / 32];
+    uint32_t flood_mask_1[TR_GUI_MODULE_COUNT / 32];
+    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
+    size_t update_count = 0;
+
+    memset(flood_mask_0, 0, sizeof(flood_mask_0));
+    memset(flood_mask_1, 0, sizeof(flood_mask_1));
+
+    // Find root modules (modules that have no connected inputs i.e. no dependencies)
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        tr_gui_module_t* module = &rack->gui_modules[i];
+    
+        const float* inputs[64];
+        int input_count;
+        tr_enumerate_inputs(inputs, &input_count, rack, module);
+
+        size_t connected_input_count = 0;
+        for (int j = 0; j < input_count; ++j)
+        {
+            if (inputs[j] != NULL)
+            {
+                ++connected_input_count;
+            }
+        }
+
+        if (connected_input_count == 0)
+        {
+            flood_mask_1[i / 32] |= (1 << (i % 32));
+            update_modules[update_count++] = module;
+        }
+    }
+
+    while (update_count != rack->gui_module_count)
+    {
+        memcpy(flood_mask_0, flood_mask_1, sizeof(flood_mask_0));
+
+        // Find modules whose dependencies are all updated
+        for (size_t i = 0; i < rack->gui_module_count; ++i)
+        {
+            tr_gui_module_t* module = &rack->gui_modules[i];
+
+            if (flood_mask_0[i / 32] & (1 << (i % 32)))
+            {
+                // already updated
+                continue;
+            }
+        
+            const float* inputs[64];
+            int input_count;
+            tr_enumerate_inputs(inputs, &input_count, rack, module);
+
+            bool all_inputs_valid = true;
+            for (int j = 0; j < input_count; ++j)
+            {
+                if (!is_input_updated(rack, inputs[j], flood_mask_0))
+                {
+                    all_inputs_valid = false;
+                    break;
+                }
+            }
+
+            if (all_inputs_valid)
+            {
+                flood_mask_1[i / 32] |= (1 << (i % 32));
+                update_modules[update_count++] = module;
+            }
+        }
+    }
+
+    tr_update_modules(rack, update_modules, update_count);
+
+    tr_gui_module_t* speaker = NULL;
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        tr_gui_module_t* module = &rack->gui_modules[i];
+        if (module->type == TR_SPEAKER &&
+            rack->speaker.elements[module->index].in_audio != NULL)
+        {
+            speaker = module;
+            break;
+        }
+    }
+
+    if (speaker == NULL)
+    {
+        memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
+    }
+    else
+    {
+        assert(speaker->type == TR_SPEAKER);
+        final_mix(output, rack->speaker.elements[speaker->index].in_audio);
+    }
 }
 
 int main()
 {
     rack_t* rack = calloc(1, sizeof(rack_t));
     rack_init(rack);
-
-    timer_t timer;
-    timer_start(&timer);
     
     InitWindow(WIDTH, HEIGHT, "tinyrack");
 
@@ -934,17 +1167,26 @@ int main()
 
         BeginDrawing();
         ClearBackground(BLACK);
+
+        g_input.cable_draw_count = 0;
         
         for (size_t i = 0; i < rack->gui_module_count; ++i)
         {
             tr_gui_module_draw(rack, &rack->gui_modules[i]);
         }
 
+        for (size_t i = 0; i < g_input.cable_draw_count; ++i)
+        {
+            const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
+            DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
+        }
+
         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
         {
             g_input.active_value = NULL;
             g_input.drag_module = NULL;
-            g_input.drag_plug = NULL;
+            g_input.drag_input = NULL;
+            g_input.drag_output = NULL;
         }
         
         {
@@ -979,151 +1221,9 @@ int main()
         int16_t* samples = audio_fill(audio);
         if (samples != NULL)
         {
-            timer_reset(&timer);
-            
-            uint32_t flood_mask_0[TR_GUI_MODULE_COUNT / 32];
-            uint32_t flood_mask_1[TR_GUI_MODULE_COUNT / 32];
-            tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
-            size_t update_count = 0;
-
-            memset(flood_mask_0, 0, sizeof(flood_mask_0));
-            memset(flood_mask_1, 0, sizeof(flood_mask_1));
-
-            // Find root modules (modules that have no connected inputs i.e. no dependencies)
-            for (size_t i = 0; i < rack->gui_module_count; ++i)
-            {
-                tr_gui_module_t* module = &rack->gui_modules[i];
-                
-                size_t connected_input_count = 0;
-                
-                switch (module->type)
-                {
-                    case TR_VCO:
-                        const tr_vco_t* vco = &rack->vco.elements[module->index];
-                        if (vco->in_voct != NULL) ++connected_input_count;
-                        break;
-                    case TR_SEQ8:
-                        const tr_seq8_t* seq8 = &rack->seq8.elements[module->index];
-                        if (seq8->in_step != NULL) ++connected_input_count;
-                        break;
-                    case TR_SPEAKER:
-                        const tr_speaker_t* speaker = &rack->speaker.elements[module->index];
-                        if (speaker->in_audio != NULL) ++connected_input_count;
-                        break;
-                    case TR_QUANTIZER:
-                        const tr_quantizer_t* quantizer = &rack->quantizer.elements[module->index];
-                        if (quantizer->in_cv != NULL) ++connected_input_count;
-                        break;
-                    case TR_LP:
-                        const tr_lp_t* lp = &rack->lp.elements[module->index];
-                        if (lp->in_audio != NULL) ++connected_input_count;
-                        if (lp->in_cut != NULL) ++connected_input_count;
-                        break;
-                    case TR_ADSR:
-                        const tr_adsr_t* adsr = &rack->adsr.elements[module->index];
-                        if (adsr->in_gate != NULL) ++connected_input_count;
-                        break;
-                    case TR_MIXER:
-                        const tr_mixer_t* mixer = &rack->mixer.elements[module->index];
-                        if (mixer->in_0 != NULL) ++connected_input_count;
-                        if (mixer->in_1 != NULL) ++connected_input_count;
-                        if (mixer->in_2 != NULL) ++connected_input_count;
-                        if (mixer->in_3 != NULL) ++connected_input_count;
-                        break;
-                }
-
-                if (connected_input_count == 0)
-                {
-                    flood_mask_1[i / 32] |= (1 << (i % 32));
-                    update_modules[update_count++] = module;
-                }
-            }
-
-            while (update_count != rack->gui_module_count)
-            {
-                memcpy(flood_mask_0, flood_mask_1, sizeof(flood_mask_0));
-
-                // Find modules whose dependencies are all updated
-                for (size_t i = 0; i < rack->gui_module_count; ++i)
-                {
-                    tr_gui_module_t* module = &rack->gui_modules[i];
-
-                    if (flood_mask_0[i / 32] & (1 << (i % 32)))
-                    {
-                        // already updated
-                        continue;
-                    }
-                    
-                    bool all_inputs_valid = true;
-                    
-                    switch (module->type)
-                    {
-                        case TR_SPEAKER:
-                            const tr_speaker_t* speaker = &rack->speaker.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, speaker->in_audio, flood_mask_0);
-                            break;
-                        case TR_SEQ8:
-                            const tr_seq8_t* seq8 = &rack->seq8.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, seq8->in_step, flood_mask_0);
-                            break;
-                        case TR_VCO:
-                            const tr_vco_t* vco = &rack->vco.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, vco->in_voct, flood_mask_0);
-                            break;
-                        case TR_QUANTIZER:
-                            const tr_quantizer_t* quantizer = &rack->quantizer.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, quantizer->in_cv, flood_mask_0);
-                            break;
-                        case TR_LP:
-                            const tr_lp_t* lp = &rack->lp.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, lp->in_audio, flood_mask_0);
-                            all_inputs_valid &= is_input_updated(rack, lp->in_cut, flood_mask_0);
-                            break;
-                        case TR_ADSR:
-                            const tr_adsr_t* adsr = &rack->adsr.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, adsr->in_gate, flood_mask_0);
-                            break;
-                        case TR_MIXER:
-                            const tr_mixer_t* mixer = &rack->mixer.elements[module->index];
-                            all_inputs_valid &= is_input_updated(rack, mixer->in_0, flood_mask_0);
-                            all_inputs_valid &= is_input_updated(rack, mixer->in_1, flood_mask_0);
-                            all_inputs_valid &= is_input_updated(rack, mixer->in_2, flood_mask_0);
-                            all_inputs_valid &= is_input_updated(rack, mixer->in_3, flood_mask_0);
-                            break;
-                    }
-
-                    if (all_inputs_valid)
-                    {
-                        flood_mask_1[i / 32] |= (1 << (i % 32));
-                        update_modules[update_count++] = module;
-                    }
-                }
-            }
-
-            tr_update_modules(rack, update_modules, update_count);
-
-            tr_gui_module_t* speaker = NULL;
-            for (size_t i = 0; i < rack->gui_module_count; ++i)
-            {
-                tr_gui_module_t* module = &rack->gui_modules[i];
-                if (module->type == TR_SPEAKER &&
-                    rack->speaker.elements[module->index].in_audio != NULL)
-                {
-                    speaker = module;
-                    break;
-                }
-            }
-
-            if (speaker == NULL)
-            {
-                memset(samples, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
-            }
-            else
-            {
-                assert(speaker->type == TR_SPEAKER);
-                final_mix(samples, rack->speaker.elements[speaker->index].in_audio);
-            }
-
+            timer_t timer;
+            timer_start(&timer);
+            tr_produce_final_mix(samples, rack);
             const double ms = timer_reset(&timer);
             printf("final_mix: %f us\n", ms * 1000.0);
         }
