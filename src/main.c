@@ -1,5 +1,4 @@
 #include "timer.h"
-#include "audio.h"
 #include "wav.h"
 
 #include <stdlib.h>
@@ -1209,7 +1208,12 @@ int main()
     
     InitWindow(WIDTH, HEIGHT, "tinyrack");
 
-    audio_t* audio = audio_create(TR_SAMPLE_RATE, TR_SAMPLE_COUNT);
+    InitAudioDevice();
+    assert(IsAudioDeviceReady());
+    SetAudioStreamBufferSizeDefault(TR_SAMPLE_COUNT);
+
+    AudioStream stream = LoadAudioStream(TR_SAMPLE_RATE, 16, 1);
+    PlayAudioStream(stream);
 
     enum tr_module_type add_module_type = TR_VCO;
 
@@ -1314,8 +1318,7 @@ int main()
 
         EndDrawing();
 
-        int16_t* samples = audio_fill(audio);
-        if (samples != NULL)
+        if (IsAudioStreamProcessed(stream))
         {
             timer_t timer;
             timer_start(&timer);
@@ -1323,7 +1326,7 @@ int main()
             int16_t final_mix[TR_SAMPLE_COUNT];
             tr_produce_final_mix(final_mix, rack);
             
-            memcpy(samples, final_mix, sizeof(final_mix));
+            UpdateAudioStream(stream, final_mix, TR_SAMPLE_COUNT);
 
             if (is_recording)
             {
