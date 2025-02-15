@@ -1,5 +1,4 @@
 #include "timer.h"
-#include "wav.h"
 
 #include <stdlib.h>
 #include <memory.h>
@@ -1309,10 +1308,18 @@ int main()
             }
             else
             {
-                FILE* recording_file = fopen("recording.wav", "wb");
-                assert(recording_file != NULL);
-                write_wav_file(recording_file, recording_samples, recording_offset, TR_SAMPLE_RATE);
-                fclose(recording_file);
+                const Wave wave = {
+                    .frameCount = (uint32_t)recording_offset,
+                    .sampleRate = TR_SAMPLE_RATE,
+                    .sampleSize = 16,
+                    .channels = 1,
+                    .data = recording_samples,
+                };
+                const bool export_result = ExportWave(wave, "recording.wav");
+                if (!export_result)
+                {
+                    fprintf(stderr, "Failed to export wav file.\n");
+                }
             }
         }
 
