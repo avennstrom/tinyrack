@@ -1,5 +1,6 @@
 #include "timer.h"
 #include "audio.h"
+#include "wav.h"
 
 #include <stdlib.h>
 #include <memory.h>
@@ -602,9 +603,13 @@ typedef struct tr_gui_input
 
     tr_cable_draw_command_t cable_draws[1024];
     size_t cable_draw_count;
+
+    Camera2D camera;
 } tr_gui_input_t;
 
-static tr_gui_input_t g_input;
+static tr_gui_input_t g_input = {
+    .camera.zoom = 1.0f,
+};
 
 #define TR_KNOB_RADIUS (18)
 #define TR_KNOB_PADDING (2)
@@ -653,7 +658,7 @@ void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
-        const Vector2 mouse = GetMousePosition();
+        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
         if (mouse.x > module->x &&
             mouse.y > module->y &&
             mouse.x < module->x + width && 
@@ -698,7 +703,8 @@ void tr_gui_knob(float* value, float min, float max, int x, int y)
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
         const Vector2 center = {(float)x, (float)y};
-        if (Vector2Distance(GetMousePosition(), center) < TR_KNOB_RADIUS)
+        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+        if (Vector2Distance(mouse, center) < TR_KNOB_RADIUS)
         {
             g_input.active_value = value;
         }
@@ -720,7 +726,8 @@ void tr_gui_knob_int(int* value, int min, int max, int x, int y)
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
         const Vector2 center = {(float)x, (float)y};
-        if (Vector2Distance(GetMousePosition(), center) < TR_KNOB_RADIUS)
+        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+        if (Vector2Distance(mouse, center) < TR_KNOB_RADIUS)
         {
             g_input.active_value = value;
             g_input.active_int = (float)*value;
@@ -755,10 +762,11 @@ void tr_gui_plug_input(const float** value, int x, int y)
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
     
     const Vector2 center = {(float)x, (float)y};
+    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
 
     if (g_input.drag_output != NULL && 
         IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
-        Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
+        Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
     {
         *value = g_input.drag_output;
         g_input.drag_output = NULL;
@@ -769,7 +777,7 @@ void tr_gui_plug_input(const float** value, int x, int y)
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
-        if (Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
+        if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
             g_input.drag_input = value;
             g_input.drag_color = g_cable_colors[rand() % tr_countof(g_cable_colors)];
@@ -780,7 +788,7 @@ void tr_gui_plug_input(const float** value, int x, int y)
     {
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
-            .to = GetMousePosition(),
+            .to = mouse,
             .color = g_input.drag_color,
         };
     }
@@ -807,9 +815,11 @@ void tr_gui_plug_output(const float* buffer, int x, int y)
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, highlight ? TR_PLUG_HIGHLIGHT_COLOR : DARKGRAY);
 
     const Vector2 center = {(float)x, (float)y};
+    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+
     if (g_input.drag_input != NULL && 
         IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
-        Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
+        Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
     {
         const tr_input_plug_t plug = {g_input.drag_color};
         hmput(g_input.input_plugs, g_input.drag_input, plug);
@@ -820,7 +830,7 @@ void tr_gui_plug_output(const float* buffer, int x, int y)
     
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
-        if (Vector2Distance(GetMousePosition(), center) < TR_PLUG_RADIUS)
+        if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
             g_input.drag_output = buffer;
             g_input.drag_color = g_cable_colors[rand() % tr_countof(g_cable_colors)];
@@ -831,7 +841,7 @@ void tr_gui_plug_output(const float* buffer, int x, int y)
     {
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
-            .to = GetMousePosition(),
+            .to = mouse,
             .color = g_input.drag_color,
         };
     }
@@ -1203,6 +1213,10 @@ int main()
 
     enum tr_module_type add_module_type = TR_VCO;
 
+    bool is_recording = false;
+    int16_t* recording_samples = malloc(86400ull * TR_SAMPLE_RATE * sizeof(int16_t));
+    size_t recording_offset = 0;
+
     while (1)
     {
         if (WindowShouldClose())
@@ -1210,8 +1224,15 @@ int main()
             break;
         }
 
+        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+        {
+            g_input.camera.offset = Vector2Add(g_input.camera.offset, GetMouseDelta());
+        }
+
         BeginDrawing();
         ClearBackground(BLACK);
+
+        BeginMode2D(g_input.camera);
 
         g_input.cable_draw_count = 0;
         
@@ -1226,6 +1247,8 @@ int main()
             DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
             //DrawLineBezier(draw->from, draw->to, 6.0f, draw->color);
         }
+
+        EndMode2D();
 
         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
         {
@@ -1255,14 +1278,37 @@ int main()
             DrawRectangle(0, 0, WIDTH, menu_height, GetColor(0x303030ff));
             DrawText(g_tr_gui_modinfo[add_module_type].name, 0, 0, 40, WHITE);
 
+            const char* recording_text = is_recording ? "Press F5 to stop recording" : "Press F5 to start recording";
+            DrawText(recording_text, 260, menu_height / 2 - 12, 24, WHITE);
+            DrawCircle(240, menu_height / 2, 14, is_recording ? RED : GRAY);
+
             const Vector2 mouse = GetMousePosition();
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
                 mouse.y < menu_height)
             {
+                const Vector2 world_mouse = GetScreenToWorld2D(mouse, g_input.camera);
+
                 tr_gui_module_t* module = tr_rack_create_module(rack, add_module_type);
-                module->x = (int)mouse.x;
-                module->y = (int)mouse.y;
+                module->x = (int)world_mouse.x;
+                module->y = (int)world_mouse.y;
                 g_input.drag_module = module;
+            }
+        }
+
+        if (IsKeyPressed(KEY_F5))
+        {
+            is_recording = !is_recording;
+            
+            if (is_recording)
+            {
+                recording_offset = 0;
+            }
+            else
+            {
+                FILE* recording_file = fopen("recording.wav", "wb");
+                assert(recording_file != NULL);
+                write_wav_file(recording_file, recording_samples, recording_offset, TR_SAMPLE_RATE);
+                fclose(recording_file);
             }
         }
 
@@ -1273,7 +1319,18 @@ int main()
         {
             timer_t timer;
             timer_start(&timer);
-            tr_produce_final_mix(samples, rack);
+
+            int16_t final_mix[TR_SAMPLE_COUNT];
+            tr_produce_final_mix(final_mix, rack);
+            
+            memcpy(samples, final_mix, sizeof(final_mix));
+
+            if (is_recording)
+            {
+                memcpy(recording_samples + recording_offset, final_mix, sizeof(final_mix));
+                recording_offset += TR_SAMPLE_COUNT;
+            }
+
             const double ms = timer_reset(&timer);
             printf("final_mix: %f us\n", ms * 1000.0);
         }
