@@ -4,6 +4,10 @@
 #define TR_RECORDING_FEATURE
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 #ifdef TR_TIMER_MODULE
 #include "timer.h"
 #endif
@@ -1237,10 +1241,160 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
     }
 }
 
+typedef struct app
+{
+    rack_t* rack;
+    AudioStream stream;
+    enum tr_module_type add_module_type;
+#ifdef TR_RECORDING_FEATURE
+    bool is_recording;
+    int16_t* recording_samples;
+    size_t recording_offset;
+#endif
+} app_t;
+
+static app_t g_app;
+
+void tr_frame_update_draw(void)
+{
+    app_t* app = &g_app;
+    rack_t* rack = app->rack;
+
+    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+    {
+        g_input.camera.offset = Vector2Add(g_input.camera.offset, GetMouseDelta());
+    }
+
+    BeginDrawing();
+    ClearBackground(BLACK);
+
+    BeginMode2D(g_input.camera);
+
+    g_input.cable_draw_count = 0;
+    
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        tr_gui_module_draw(rack, &rack->gui_modules[i]);
+    }
+
+    for (size_t i = 0; i < g_input.cable_draw_count; ++i)
+    {
+        const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
+        DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
+        //DrawLineBezier(draw->from, draw->to, 6.0f, draw->color);
+    }
+
+    EndMode2D();
+
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+    {
+        if (g_input.drag_input != NULL)
+        {
+            *g_input.drag_input = NULL;
+        }
+        g_input.active_value = NULL;
+        g_input.drag_module = NULL;
+        g_input.drag_input = NULL;
+        g_input.drag_output = NULL;
+    }
+    
+    {
+        if (GetMouseWheelMoveV().y < 0.0f)
+        {
+            app->add_module_type += 1;
+        }
+        else if (GetMouseWheelMoveV().y > 0.0f)
+        {
+            app->add_module_type += TR_MODULE_COUNT - 1;
+        }
+        app->add_module_type = app->add_module_type % TR_MODULE_COUNT;
+
+        const int menu_height = 42;
+
+        DrawRectangle(0, 0, WIDTH, menu_height, GetColor(0x303030ff));
+        DrawText(g_tr_gui_modinfo[app->add_module_type].name, 0, 0, 40, WHITE);
+
+#ifdef TR_RECORDING_FEATURE
+        const char* recording_text = app->is_recording ? "Press F5 to stop recording" : "Press F5 to start recording";
+        DrawText(recording_text, 260, menu_height / 2 - 12, 24, WHITE);
+        DrawCircle(240, menu_height / 2, 14, app->is_recording ? RED : GRAY);
+#endif
+
+        const Vector2 mouse = GetMousePosition();
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+            mouse.y < menu_height)
+        {
+            const Vector2 world_mouse = GetScreenToWorld2D(mouse, g_input.camera);
+
+            tr_gui_module_t* module = tr_rack_create_module(rack, app->add_module_type);
+            module->x = (int)world_mouse.x;
+            module->y = (int)world_mouse.y;
+            g_input.drag_module = module;
+        }
+    }
+
+#ifdef TR_RECORDING_FEATURE
+    if (IsKeyPressed(KEY_F5))
+    {
+        app->is_recording = !app->is_recording;
+        
+        if (app->is_recording)
+        {
+            app->recording_offset = 0;
+        }
+        else
+        {
+            const Wave wave = {
+                .frameCount = (uint32_t)app->recording_offset,
+                .sampleRate = TR_SAMPLE_RATE,
+                .sampleSize = 16,
+                .channels = 1,
+                .data = app->recording_samples,
+            };
+            const bool export_result = ExportWave(wave, "recording.wav");
+            if (!export_result)
+            {
+                fprintf(stderr, "Failed to export wav file.\n");
+            }
+        }
+    }
+#endif
+
+    EndDrawing();
+
+    if (IsAudioStreamProcessed(app->stream))
+    {
+#ifdef TR_TIMER_MODULE
+        timer_t timer;
+        timer_start(&timer);
+#endif
+
+        int16_t final_mix[TR_SAMPLE_COUNT];
+        tr_produce_final_mix(final_mix, rack);
+        
+        UpdateAudioStream(app->stream, final_mix, TR_SAMPLE_COUNT);
+
+#ifdef TR_RECORDING_FEATURE
+        if (app->is_recording)
+        {
+            memcpy(app->recording_samples + app->recording_offset, final_mix, sizeof(final_mix));
+            app->recording_offset += TR_SAMPLE_COUNT;
+        }
+#endif
+
+#ifdef TR_TIMER_MODULE
+        const double ms = timer_reset(&timer);
+        printf("final_mix: %f us\n", ms * 1000.0);
+#endif
+    }
+}
+
 int main()
 {
-    rack_t* rack = calloc(1, sizeof(rack_t));
-    rack_init(rack);
+    app_t* app = &g_app;
+
+    app->rack = calloc(1, sizeof(rack_t));
+    rack_init(app->rack);
     
     InitWindow(WIDTH, HEIGHT, "tinyrack");
 
@@ -1248,152 +1402,25 @@ int main()
     assert(IsAudioDeviceReady());
     SetAudioStreamBufferSizeDefault(TR_SAMPLE_COUNT);
 
-    AudioStream stream = LoadAudioStream(TR_SAMPLE_RATE, 16, 1);
-    PlayAudioStream(stream);
+    app->stream = LoadAudioStream(TR_SAMPLE_RATE, 16, 1);
+    PlayAudioStream(app->stream);
 
-    enum tr_module_type add_module_type = TR_VCO;
+    app->add_module_type = TR_VCO;
 
 #ifdef TR_RECORDING_FEATURE
-    bool is_recording = false;
-    int16_t* recording_samples = malloc(86400ull * TR_SAMPLE_RATE * sizeof(int16_t));
-    size_t recording_offset = 0;
+    app->is_recording = false;
+    app->recording_samples = malloc(86400ull * TR_SAMPLE_RATE * sizeof(int16_t));
+    app->recording_offset = 0;
 #endif
 
-    while (1)
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(tr_frame_update_draw, 0, 1);
+#else
+    while (!WindowShouldClose())
     {
-        if (WindowShouldClose())
-        {
-            break;
-        }
-
-        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
-        {
-            g_input.camera.offset = Vector2Add(g_input.camera.offset, GetMouseDelta());
-        }
-
-        BeginDrawing();
-        ClearBackground(BLACK);
-
-        BeginMode2D(g_input.camera);
-
-        g_input.cable_draw_count = 0;
-        
-        for (size_t i = 0; i < rack->gui_module_count; ++i)
-        {
-            tr_gui_module_draw(rack, &rack->gui_modules[i]);
-        }
-
-        for (size_t i = 0; i < g_input.cable_draw_count; ++i)
-        {
-            const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
-            DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
-            //DrawLineBezier(draw->from, draw->to, 6.0f, draw->color);
-        }
-
-        EndMode2D();
-
-        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
-        {
-            if (g_input.drag_input != NULL)
-            {
-                *g_input.drag_input = NULL;
-            }
-            g_input.active_value = NULL;
-            g_input.drag_module = NULL;
-            g_input.drag_input = NULL;
-            g_input.drag_output = NULL;
-        }
-        
-        {
-            if (GetMouseWheelMoveV().y < 0.0f)
-            {
-                add_module_type += 1;
-            }
-            else if (GetMouseWheelMoveV().y > 0.0f)
-            {
-                add_module_type += TR_MODULE_COUNT - 1;
-            }
-            add_module_type = add_module_type % TR_MODULE_COUNT;
-
-            const int menu_height = 42;
-
-            DrawRectangle(0, 0, WIDTH, menu_height, GetColor(0x303030ff));
-            DrawText(g_tr_gui_modinfo[add_module_type].name, 0, 0, 40, WHITE);
-
-#ifdef TR_RECORDING_FEATURE
-            const char* recording_text = is_recording ? "Press F5 to stop recording" : "Press F5 to start recording";
-            DrawText(recording_text, 260, menu_height / 2 - 12, 24, WHITE);
-            DrawCircle(240, menu_height / 2, 14, is_recording ? RED : GRAY);
-#endif
-
-            const Vector2 mouse = GetMousePosition();
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-                mouse.y < menu_height)
-            {
-                const Vector2 world_mouse = GetScreenToWorld2D(mouse, g_input.camera);
-
-                tr_gui_module_t* module = tr_rack_create_module(rack, add_module_type);
-                module->x = (int)world_mouse.x;
-                module->y = (int)world_mouse.y;
-                g_input.drag_module = module;
-            }
-        }
-
-#ifdef TR_RECORDING_FEATURE
-        if (IsKeyPressed(KEY_F5))
-        {
-            is_recording = !is_recording;
-            
-            if (is_recording)
-            {
-                recording_offset = 0;
-            }
-            else
-            {
-                const Wave wave = {
-                    .frameCount = (uint32_t)recording_offset,
-                    .sampleRate = TR_SAMPLE_RATE,
-                    .sampleSize = 16,
-                    .channels = 1,
-                    .data = recording_samples,
-                };
-                const bool export_result = ExportWave(wave, "recording.wav");
-                if (!export_result)
-                {
-                    fprintf(stderr, "Failed to export wav file.\n");
-                }
-            }
-        }
-#endif
-
-        EndDrawing();
-
-        if (IsAudioStreamProcessed(stream))
-        {
-#ifdef TR_TIMER_MODULE
-            timer_t timer;
-            timer_start(&timer);
-#endif
-
-            int16_t final_mix[TR_SAMPLE_COUNT];
-            tr_produce_final_mix(final_mix, rack);
-            
-            UpdateAudioStream(stream, final_mix, TR_SAMPLE_COUNT);
-
-#ifdef TR_RECORDING_FEATURE
-            if (is_recording)
-            {
-                memcpy(recording_samples + recording_offset, final_mix, sizeof(final_mix));
-                recording_offset += TR_SAMPLE_COUNT;
-            }
-#endif
-
-#ifdef TR_TIMER_MODULE
-            const double ms = timer_reset(&timer);
-            printf("final_mix: %f us\n", ms * 1000.0);
-#endif
-        }
+        tr_frame_update_draw();
     }
+#endif
 
     return 0;
 }
