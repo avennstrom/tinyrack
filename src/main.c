@@ -650,7 +650,11 @@ void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
 {
     g_input.draw_module = module;
 
-    const tr_gui_modinfo_t* modinfo = &g_tr_gui_modinfo[module->type];
+    if (g_input.drag_module == module)
+    {
+        module->x += (int)GetMouseDelta().x;
+        module->y += (int)GetMouseDelta().y;
+    }
 
     DrawRectangle(module->x, module->y, width, height, GRAY);
     DrawRectangle(
@@ -661,7 +665,7 @@ void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
         DARKGRAY);
 
     DrawText(
-        modinfo->name, 
+        g_tr_gui_modinfo[module->type].name, 
         module->x + TR_MODULE_PADDING * 2, 
         module->y + TR_MODULE_PADDING * 2,
         20,
@@ -677,12 +681,6 @@ void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
         {
             g_input.drag_module = module;
         }
-    }
-
-    if (g_input.drag_module == module)
-    {
-        module->x += (int)GetMouseDelta().x;
-        module->y += (int)GetMouseDelta().y;
     }
 }
 
