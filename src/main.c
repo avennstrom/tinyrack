@@ -1,4 +1,12 @@
+
+#ifndef __EMSCRIPTEN__
+#define TR_TIMER_MODULE
+#define TR_RECORDING_FEATURE
+#endif
+
+#ifdef TR_TIMER_MODULE
 #include "timer.h"
+#endif
 
 #include <stdlib.h>
 #include <memory.h>
@@ -527,6 +535,7 @@ size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
         case TR_RANDOM: return rack->random.count++;
         case TR_SPEAKER: return rack->speaker.count++;
         case TR_SCOPE: return rack->scope.count++;
+        case TR_MODULE_COUNT: break;
     }
     assert(0);
     return (size_t)-1;
@@ -1023,12 +1032,15 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
         case TR_RANDOM: tr_random_draw(&rack->random.elements[module->index], module); break;
         case TR_SPEAKER: tr_speaker_draw(&rack->speaker.elements[module->index], module); break;
         case TR_SCOPE: tr_scope_draw(&rack->scope.elements[module->index], module); break;
+        case TR_MODULE_COUNT: assert(0);
     }
 }
 
 void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
 {
+#ifndef __EMSCRIPTEN__
     printf("tr_update_modules:\n");
+#endif
     for (size_t i = 0; i < count; ++i)
     {
         tr_gui_module_t* module = modules[i];
@@ -1044,9 +1056,14 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
             case TR_NOISE: tr_noise_update(&rack->noise.elements[module->index]); break;
             case TR_QUANTIZER: tr_quantizer_update(&rack->quantizer.elements[module->index]); break;
             case TR_RANDOM: tr_random_update(&rack->random.elements[module->index]); break;
+            case TR_SPEAKER: break;
+            case TR_SCOPE: break;
+            case TR_MODULE_COUNT: assert(0);
         }
 
+#ifndef __EMSCRIPTEN__
         printf("%s %zu\n", g_tr_gui_modinfo[module->type].name, module->index);
+#endif
     }
 }
 
@@ -1068,38 +1085,58 @@ void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const t
 
     switch (module->type)
     {
-        case TR_VCO:
+        case TR_VCO: {
             const tr_vco_t* vco = &rack->vco.elements[module->index];
             inputs[(*count)++] = vco->in_voct;
             break;
-        case TR_SEQ8:
+        }
+        case TR_SEQ8: {
             const tr_seq8_t* seq8 = &rack->seq8.elements[module->index];
             inputs[(*count)++] = seq8->in_step;
             break;
-        case TR_SPEAKER:
+        }
+        case TR_SPEAKER: {
             const tr_speaker_t* speaker = &rack->speaker.elements[module->index];
             inputs[(*count)++] = speaker->in_audio;
             break;
-        case TR_QUANTIZER:
+        }
+        case TR_QUANTIZER: {
             const tr_quantizer_t* quantizer = &rack->quantizer.elements[module->index];
             inputs[(*count)++] = quantizer->in_cv;
             break;
-        case TR_LP:
+        }
+        case TR_LP: {
             const tr_lp_t* lp = &rack->lp.elements[module->index];
             inputs[(*count)++] = lp->in_audio;
             inputs[(*count)++] = lp->in_cut;
             break;
-        case TR_ADSR:
+        }
+        case TR_ADSR: {
             const tr_adsr_t* adsr = &rack->adsr.elements[module->index];
             inputs[(*count)++] = adsr->in_gate;
             break;
-        case TR_MIXER:
+        }
+        case TR_MIXER: {
             const tr_mixer_t* mixer = &rack->mixer.elements[module->index];
             inputs[(*count)++] = mixer->in_0;
             inputs[(*count)++] = mixer->in_1;
             inputs[(*count)++] = mixer->in_2;
             inputs[(*count)++] = mixer->in_3;
             break;
+        }
+        case TR_VCA: {
+            const tr_vca_t* vca = &rack->vca.elements[module->index];
+            inputs[(*count)++] = vca->in_audio;
+            inputs[(*count)++] = vca->in_cv;
+            break;
+        }
+        // these have no inputs
+        case TR_CLOCK:
+        case TR_NOISE:
+        case TR_SCOPE:
+        case TR_RANDOM:
+            break;
+        case TR_MODULE_COUNT: assert(0);
     }
 }
 
@@ -1216,9 +1253,11 @@ int main()
 
     enum tr_module_type add_module_type = TR_VCO;
 
+#ifdef TR_RECORDING_FEATURE
     bool is_recording = false;
     int16_t* recording_samples = malloc(86400ull * TR_SAMPLE_RATE * sizeof(int16_t));
     size_t recording_offset = 0;
+#endif
 
     while (1)
     {
@@ -1281,9 +1320,11 @@ int main()
             DrawRectangle(0, 0, WIDTH, menu_height, GetColor(0x303030ff));
             DrawText(g_tr_gui_modinfo[add_module_type].name, 0, 0, 40, WHITE);
 
+#ifdef TR_RECORDING_FEATURE
             const char* recording_text = is_recording ? "Press F5 to stop recording" : "Press F5 to start recording";
             DrawText(recording_text, 260, menu_height / 2 - 12, 24, WHITE);
             DrawCircle(240, menu_height / 2, 14, is_recording ? RED : GRAY);
+#endif
 
             const Vector2 mouse = GetMousePosition();
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
@@ -1298,6 +1339,7 @@ int main()
             }
         }
 
+#ifdef TR_RECORDING_FEATURE
         if (IsKeyPressed(KEY_F5))
         {
             is_recording = !is_recording;
@@ -1322,27 +1364,34 @@ int main()
                 }
             }
         }
+#endif
 
         EndDrawing();
 
         if (IsAudioStreamProcessed(stream))
         {
+#ifdef TR_TIMER_MODULE
             timer_t timer;
             timer_start(&timer);
+#endif
 
             int16_t final_mix[TR_SAMPLE_COUNT];
             tr_produce_final_mix(final_mix, rack);
             
             UpdateAudioStream(stream, final_mix, TR_SAMPLE_COUNT);
 
+#ifdef TR_RECORDING_FEATURE
             if (is_recording)
             {
                 memcpy(recording_samples + recording_offset, final_mix, sizeof(final_mix));
                 recording_offset += TR_SAMPLE_COUNT;
             }
+#endif
 
+#ifdef TR_TIMER_MODULE
             const double ms = timer_reset(&timer);
             printf("final_mix: %f us\n", ms * 1000.0);
+#endif
         }
     }
 
