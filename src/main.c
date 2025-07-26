@@ -1,6 +1,6 @@
 
 #ifdef __EMSCRIPTEN__
-//#define TR_AUDIO_CALLBACK
+#define TR_AUDIO_CALLBACK
 #endif
 
 #ifndef __EMSCRIPTEN__
@@ -1045,8 +1045,9 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
 void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
 {
 #ifndef __EMSCRIPTEN__
-    printf("tr_update_modules:\n");
+    //printf("tr_update_modules:\n");
 #endif
+
     for (size_t i = 0; i < count; ++i)
     {
         tr_gui_module_t* module = modules[i];
@@ -1068,7 +1069,7 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
         }
 
 #ifndef __EMSCRIPTEN__
-        printf("%s %zu\n", g_tr_gui_modinfo[module->type].name, module->index);
+        //printf("%s %zu\n", g_tr_gui_modinfo[module->type].name, module->index);
 #endif
     }
 }
@@ -1076,18 +1077,6 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
 size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module)
 {
     return module - rack->gui_modules;
-}
-
-bool is_input_updated(const rack_t* rack, const float* buffer, const uint32_t* flood_mask)
-{
-    if (buffer == NULL)
-    {
-        return true;
-    }
-
-    const tr_output_plug_t plug = hmget(g_input.output_plugs, buffer);
-    const ptrdiff_t parent = tr_get_gui_module_index(rack, plug.module);
-    return (flood_mask[parent / 32] & (1 << (parent % 32))) != 0;
 }
 
 void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const tr_gui_module_t* module)
@@ -1157,31 +1146,13 @@ typedef struct tr_module_sort_data
     int distance;
 } tr_module_sort_data_t;
 
-int tr_update_module_sort_function(const tr_module_sort_data_t* lhs, const tr_module_sort_data_t* rhs)
+int tr_update_module_sort_function(const void* lhs, const void* rhs)
 {
-    return rhs->distance - lhs->distance;
+    return ((const tr_module_sort_data_t*)rhs)->distance - ((const tr_module_sort_data_t*)lhs)->distance;
 }
 
-void tr_produce_final_mix(int16_t* output, rack_t* rack)
+size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack, const tr_gui_module_t* speaker)
 {
-    tr_gui_module_t* speaker = NULL;
-    for (size_t i = 0; i < rack->gui_module_count; ++i)
-    {
-        tr_gui_module_t* module = &rack->gui_modules[i];
-        if (module->type == TR_SPEAKER &&
-            rack->speaker.elements[module->index].in_audio != NULL)
-        {
-            speaker = module;
-            break;
-        }
-    }
-
-    if (speaker == NULL)
-    {
-        memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
-        return;
-    }
-
     typedef struct stack_item
     {
         const tr_gui_module_t* module;
@@ -1215,7 +1186,11 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
         {
             const size_t parent_module_index = tr_get_gui_module_index(rack, top.parent);
             assert(visited_mask[parent_module_index / 32] & (1 << (parent_module_index % 32)));
-            distance[module_index] = max(distance[module_index], distance[parent_module_index] + 1);
+            const uint32_t next_distance = distance[parent_module_index] + 1;
+            if (distance[module_index] < next_distance)
+            {
+                distance[module_index] = next_distance;
+            }
         }
 
         const float* inputs[64];
@@ -1259,11 +1234,36 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
 
     qsort(sort_data, update_count, sizeof(tr_gui_module_t*), tr_update_module_sort_function);
 
-    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
     for (size_t i = 0; i < update_count; ++i)
     {
         update_modules[i] = &rack->gui_modules[sort_data[i].module_index];
     }
+
+    return update_count;
+}
+
+void tr_produce_final_mix(int16_t* output, rack_t* rack)
+{
+    tr_gui_module_t* speaker = NULL;
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        tr_gui_module_t* module = &rack->gui_modules[i];
+        if (module->type == TR_SPEAKER &&
+            rack->speaker.elements[module->index].in_audio != NULL)
+        {
+            speaker = module;
+            break;
+        }
+    }
+
+    if (speaker == NULL)
+    {
+        memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
+        return;
+    }
+
+    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
+    const size_t update_count = tr_resolve_module_graph(update_modules, rack, speaker);
 
     tr_update_modules(rack, update_modules, update_count);
 
@@ -1281,16 +1281,48 @@ typedef struct app
     int16_t* recording_samples;
     size_t recording_offset;
 #endif
+#ifdef TR_AUDIO_CALLBACK
+    int16_t final_mix[TR_SAMPLE_COUNT];
+    size_t final_mix_remaining;
+#endif
 } app_t;
 
-static app_t g_app;
+static app_t g_app = {0};
 
+#ifdef TR_AUDIO_CALLBACK
 void tr_audio_callback(void *bufferData, unsigned int frames)
 {
-    printf("frames: %d\n", frames);
-    assert(frames == TR_SAMPLE_COUNT);
-    tr_produce_final_mix(bufferData, g_app.rack);
+    int16_t* samples = bufferData;
+    size_t write_cursor = 0;
+
+    //printf("frames: %d\n", frames);
+
+    while (write_cursor < frames)
+    {
+        if (g_app.final_mix_remaining == 0)
+        {
+            g_app.final_mix_remaining = TR_SAMPLE_COUNT;
+            tr_produce_final_mix(g_app.final_mix, g_app.rack);
+        }
+
+        const size_t final_mix_cursor = TR_SAMPLE_COUNT - g_app.final_mix_remaining;
+        const size_t frames_available = frames - write_cursor;
+
+        size_t final_mix_available = g_app.final_mix_remaining;
+        if (final_mix_available > frames_available)
+        {
+            final_mix_available = frames_available;
+        }
+
+        //printf("write_cursor: %zu, final_mix_cursor: %zu, final_mix_available: %zu\n", write_cursor, final_mix_cursor, final_mix_available);
+        
+        memcpy(samples + write_cursor, g_app.final_mix + final_mix_cursor, final_mix_available * sizeof(int16_t));
+
+        write_cursor += final_mix_available;
+        g_app.final_mix_remaining -= final_mix_available;
+    }
 }
+#endif
 
 void tr_frame_update_draw(void)
 {
@@ -1408,7 +1440,7 @@ void tr_frame_update_draw(void)
 #endif
 
         int16_t final_mix[TR_SAMPLE_COUNT];
-        tr_audio_callback(final_mix, TR_SAMPLE_COUNT);
+        tr_produce_final_mix(final_mix, rack);
         
         UpdateAudioStream(app->stream, final_mix, TR_SAMPLE_COUNT);
 
@@ -1422,7 +1454,7 @@ void tr_frame_update_draw(void)
 
 #ifdef TR_TIMER_MODULE
         const double ms = timer_reset(&timer);
-        printf("final_mix: %f us\n", ms * 1000.0);
+        printf("final_mix: %.3f us\n", ms * 1000.0);
 #endif
     }
 #endif
