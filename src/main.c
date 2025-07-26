@@ -1,4 +1,8 @@
 
+#ifdef __EMSCRIPTEN__
+//#define TR_AUDIO_CALLBACK
+#endif
+
 #ifndef __EMSCRIPTEN__
 #define TR_TIMER_MODULE
 #define TR_RECORDING_FEATURE
@@ -1069,6 +1073,11 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
     }
 }
 
+size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module)
+{
+    return module - rack->gui_modules;
+}
+
 bool is_input_updated(const rack_t* rack, const float* buffer, const uint32_t* flood_mask)
 {
     if (buffer == NULL)
@@ -1077,7 +1086,7 @@ bool is_input_updated(const rack_t* rack, const float* buffer, const uint32_t* f
     }
 
     const tr_output_plug_t plug = hmget(g_input.output_plugs, buffer);
-    const ptrdiff_t parent = plug.module - rack->gui_modules;
+    const ptrdiff_t parent = tr_get_gui_module_index(rack, plug.module);
     return (flood_mask[parent / 32] & (1 << (parent % 32))) != 0;
 }
 
@@ -1142,80 +1151,19 @@ void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const t
     }
 }
 
+typedef struct tr_module_sort_data
+{
+    uint32_t module_index;
+    int distance;
+} tr_module_sort_data_t;
+
+int tr_update_module_sort_function(const tr_module_sort_data_t* lhs, const tr_module_sort_data_t* rhs)
+{
+    return rhs->distance - lhs->distance;
+}
+
 void tr_produce_final_mix(int16_t* output, rack_t* rack)
 {
-    uint32_t flood_mask_0[TR_GUI_MODULE_COUNT / 32];
-    uint32_t flood_mask_1[TR_GUI_MODULE_COUNT / 32];
-    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
-    size_t update_count = 0;
-
-    memset(flood_mask_0, 0, sizeof(flood_mask_0));
-    memset(flood_mask_1, 0, sizeof(flood_mask_1));
-
-    // Find root modules (modules that have no connected inputs i.e. no dependencies)
-    for (size_t i = 0; i < rack->gui_module_count; ++i)
-    {
-        tr_gui_module_t* module = &rack->gui_modules[i];
-    
-        const float* inputs[64];
-        int input_count;
-        tr_enumerate_inputs(inputs, &input_count, rack, module);
-
-        size_t connected_input_count = 0;
-        for (int j = 0; j < input_count; ++j)
-        {
-            if (inputs[j] != NULL)
-            {
-                ++connected_input_count;
-            }
-        }
-
-        if (connected_input_count == 0)
-        {
-            flood_mask_1[i / 32] |= (1 << (i % 32));
-            update_modules[update_count++] = module;
-        }
-    }
-
-    while (update_count != rack->gui_module_count)
-    {
-        memcpy(flood_mask_0, flood_mask_1, sizeof(flood_mask_0));
-
-        // Find modules whose dependencies are all updated
-        for (size_t i = 0; i < rack->gui_module_count; ++i)
-        {
-            tr_gui_module_t* module = &rack->gui_modules[i];
-
-            if (flood_mask_0[i / 32] & (1 << (i % 32)))
-            {
-                // already updated
-                continue;
-            }
-        
-            const float* inputs[64];
-            int input_count;
-            tr_enumerate_inputs(inputs, &input_count, rack, module);
-
-            bool all_inputs_valid = true;
-            for (int j = 0; j < input_count; ++j)
-            {
-                if (!is_input_updated(rack, inputs[j], flood_mask_0))
-                {
-                    all_inputs_valid = false;
-                    break;
-                }
-            }
-
-            if (all_inputs_valid)
-            {
-                flood_mask_1[i / 32] |= (1 << (i % 32));
-                update_modules[update_count++] = module;
-            }
-        }
-    }
-
-    tr_update_modules(rack, update_modules, update_count);
-
     tr_gui_module_t* speaker = NULL;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
@@ -1231,12 +1179,96 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
     if (speaker == NULL)
     {
         memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
+        return;
     }
-    else
+
+    typedef struct stack_item
     {
-        assert(speaker->type == TR_SPEAKER);
-        final_mix(output, rack->speaker.elements[speaker->index].in_audio);
+        const tr_gui_module_t* module;
+        const tr_gui_module_t* parent;
+    } stack_item_t;
+    
+    stack_item_t stack[TR_GUI_MODULE_COUNT];
+    int sp = 0;
+
+    stack[sp++] = (stack_item_t){speaker};
+
+    uint32_t visited_mask[TR_GUI_MODULE_COUNT / 32];
+    memset(visited_mask, 0, sizeof(visited_mask));
+
+    uint32_t distance[TR_GUI_MODULE_COUNT];
+    memset(distance, 0, sizeof(distance));
+
+    while (sp > 0)
+    {
+        const stack_item_t top = stack[--sp];
+        const size_t module_index = tr_get_gui_module_index(rack, top.module);
+        
+        if (visited_mask[module_index / 32] & (1 << (module_index % 32)))
+        {
+            continue;
+        }
+
+        visited_mask[module_index / 32] |= (1 << (module_index % 32));
+
+        if (top.parent != NULL)
+        {
+            const size_t parent_module_index = tr_get_gui_module_index(rack, top.parent);
+            assert(visited_mask[parent_module_index / 32] & (1 << (parent_module_index % 32)));
+            distance[module_index] = max(distance[module_index], distance[parent_module_index] + 1);
+        }
+
+        const float* inputs[64];
+        int input_count;
+        tr_enumerate_inputs(inputs, &input_count, rack, top.module);
+
+        for (int i = 0; i < input_count; ++i)
+        {
+            if (inputs[i] == NULL)
+            {
+                continue;
+            }
+
+            const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[i]);
+
+            assert(sp < tr_countof(stack));
+            stack[sp++] = (stack_item_t){plug.module, top.module};
+        }
     }
+
+    tr_module_sort_data_t sort_data[TR_GUI_MODULE_COUNT];
+    size_t update_count = 0;
+
+    for (uint32_t mask_i = 0; mask_i < (TR_GUI_MODULE_COUNT / 32); ++mask_i)
+    {
+        if (visited_mask[mask_i] == 0)
+        {
+            continue;
+        }
+
+        const uint32_t mask = visited_mask[mask_i];
+        for (uint32_t bit = 0; bit < 32; ++bit)
+        {
+            if (mask & (1 << bit))
+            {
+                const uint32_t module_index = mask_i * 32 + bit;
+                sort_data[update_count++] = (tr_module_sort_data_t){module_index, distance[module_index]};
+            }
+        }
+    }
+
+    qsort(sort_data, update_count, sizeof(tr_gui_module_t*), tr_update_module_sort_function);
+
+    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
+    for (size_t i = 0; i < update_count; ++i)
+    {
+        update_modules[i] = &rack->gui_modules[sort_data[i].module_index];
+    }
+
+    tr_update_modules(rack, update_modules, update_count);
+
+    assert(speaker->type == TR_SPEAKER);
+    final_mix(output, rack->speaker.elements[speaker->index].in_audio);
 }
 
 typedef struct app
@@ -1252,6 +1284,13 @@ typedef struct app
 } app_t;
 
 static app_t g_app;
+
+void tr_audio_callback(void *bufferData, unsigned int frames)
+{
+    printf("frames: %d\n", frames);
+    assert(frames == TR_SAMPLE_COUNT);
+    tr_produce_final_mix(bufferData, g_app.rack);
+}
 
 void tr_frame_update_draw(void)
 {
@@ -1360,6 +1399,7 @@ void tr_frame_update_draw(void)
 
     EndDrawing();
 
+#ifndef TR_AUDIO_CALLBACK
     if (IsAudioStreamProcessed(app->stream))
     {
 #ifdef TR_TIMER_MODULE
@@ -1368,7 +1408,7 @@ void tr_frame_update_draw(void)
 #endif
 
         int16_t final_mix[TR_SAMPLE_COUNT];
-        tr_produce_final_mix(final_mix, rack);
+        tr_audio_callback(final_mix, TR_SAMPLE_COUNT);
         
         UpdateAudioStream(app->stream, final_mix, TR_SAMPLE_COUNT);
 
@@ -1385,6 +1425,7 @@ void tr_frame_update_draw(void)
         printf("final_mix: %f us\n", ms * 1000.0);
 #endif
     }
+#endif
 }
 
 int main()
@@ -1401,6 +1442,9 @@ int main()
     SetAudioStreamBufferSizeDefault(TR_SAMPLE_COUNT);
 
     app->stream = LoadAudioStream(TR_SAMPLE_RATE, 16, 1);
+#ifdef TR_AUDIO_CALLBACK
+    SetAudioStreamCallback(app->stream, tr_audio_callback);
+#endif
     PlayAudioStream(app->stream);
 
     app->add_module_type = TR_VCO;
