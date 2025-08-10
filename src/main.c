@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
+#include <ctype.h>
 #include <assert.h>
 #include <raylib.h>
 #include <raymath.h>
@@ -122,7 +123,14 @@ typedef struct tr_seq8
     uint8_t trig;
 
     const float* in_step;
-    float in_cv[8];
+    float in_cv_0;
+    float in_cv_1;
+    float in_cv_2;
+    float in_cv_3;
+    float in_cv_4;
+    float in_cv_5;
+    float in_cv_6;
+    float in_cv_7;
 
     tr_buf out_cv;
 } tr_seq8_t;
@@ -145,7 +153,7 @@ static void tr_seq8_update(tr_seq8_t* seq)
             seq->trig = trig;
         }
         
-        seq->out_cv[i] = seq->in_cv[seq->step];
+        seq->out_cv[i] = (&seq->in_cv_0)[seq->step];
     }
 }
 
@@ -452,6 +460,132 @@ typedef struct tr_scope
     const float* in_0;
 } tr_scope_t;
 
+// 
+// reflection
+//
+
+enum tr_module_field_type
+{
+    TR_MODULE_FIELD_INPUT_FLOAT,
+    TR_MODULE_FIELD_INPUT_INT,
+    TR_MODULE_FIELD_INPUT_BUFFER,
+    TR_MODULE_FIELD_BUFFER,
+};
+
+typedef struct tr_module_field_info
+{
+    enum tr_module_field_type type;
+    uintptr_t offset;
+    const char* name;
+} tr_module_field_info_t;
+
+static const tr_module_field_info_t tr_vco__fields[] = {
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_vco_t, in_v0), "in_v0"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_vco_t, in_voct), "in_voct"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_vco_t, out_sin), "out_sin"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_vco_t, out_sqr), "out_sqr"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_vco_t, out_saw), "out_saw"},
+};
+
+static const tr_module_field_info_t tr_clock__fields[] = {
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_clock_t, in_hz), "in_hz"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_clock_t, out_gate), "out_gate"},
+};
+
+static const tr_module_field_info_t tr_seq8__fields[] = {
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_seq8_t, in_step), "in_step"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_0), "in_cv_0"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_1), "in_cv_1"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_2), "in_cv_2"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_3), "in_cv_3"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_4), "in_cv_4"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_5), "in_cv_5"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_6), "in_cv_6"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_7), "in_cv_7"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_seq8_t, out_cv), "out_cv"},
+};
+
+static const tr_module_field_info_t tr_adsr__fields[] = {
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_attack), "in_attack"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_decay), "in_decay"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_sustain), "in_sustain"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_release), "in_release"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_adsr_t, in_gate), "in_gate"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_adsr_t, out_env), "out_env"},
+};
+
+static const tr_module_field_info_t tr_vca__fields[] = {
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_vca_t, in_audio), "in_audio"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_vca_t, in_cv), "in_cv"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_vca_t, out_mix), "out_mix"},
+};
+
+static const tr_module_field_info_t tr_lp__fields[] = {
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_lp_t, in_audio), "in_audio"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_lp_t, in_cut), "in_cut"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_lp_t, in_cut0), "in_cut0"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_lp_t, in_cut_mul), "in_cut_mul"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_lp_t, out_audio), "out_audio"},
+};
+
+static const tr_module_field_info_t tr_mixer__fields[] = {
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_mixer_t, in_0), "in_0"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_mixer_t, in_1), "in_1"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_mixer_t, in_2), "in_2"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_mixer_t, in_3), "in_3"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_mixer_t, in_vol0), "in_vol0"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_mixer_t, in_vol1), "in_vol1"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_mixer_t, in_vol2), "in_vol2"},
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_mixer_t, in_vol3), "in_vol3"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_mixer_t, out_mix), "out_mix"},
+};
+
+static const tr_module_field_info_t tr_noise__fields[] = {
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_noise_t, out_white), "out_white"},
+};
+
+static const tr_module_field_info_t tr_quantizer__fields[] = {
+    {TR_MODULE_FIELD_INPUT_INT, offsetof(tr_quantizer_t, in_mode), "in_mode"},
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_quantizer_t, in_cv), "in_cv"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_quantizer_t, out_cv), "out_cv"},
+};
+
+static const tr_module_field_info_t tr_random__fields[] = {
+    {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_random_t, in_speed), "in_speed"},
+    {TR_MODULE_FIELD_BUFFER, offsetof(tr_random_t, out_cv), "out_cv"},
+};
+
+static const tr_module_field_info_t tr_speaker__fields[] = {
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_speaker_t, in_audio), "in_audio"},
+};
+
+static const tr_module_field_info_t tr_scope__fields[] = {
+    {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_scope_t, in_0), "in_0"},
+};
+
+typedef struct tr_module_info
+{
+    const char* id;
+    size_t struct_size;
+    const tr_module_field_info_t* fields;
+    size_t field_count;
+} tr_module_info_t;
+
+static const tr_module_info_t tr_module_infos[TR_MODULE_COUNT] = {
+    [TR_VCO] = {"vco", sizeof(tr_vco_t), tr_vco__fields, tr_countof(tr_vco__fields)},
+    [TR_CLOCK] = {"clock", sizeof(tr_clock_t), tr_clock__fields, tr_countof(tr_clock__fields)},
+    [TR_SEQ8] = {"seq8", sizeof(tr_seq8_t), tr_seq8__fields, tr_countof(tr_seq8__fields)},
+    [TR_ADSR] = {"adsr", sizeof(tr_adsr_t), tr_adsr__fields, tr_countof(tr_adsr__fields)},
+    [TR_VCA] = {"vca", sizeof(tr_vca_t), tr_vca__fields, tr_countof(tr_vca__fields)},
+    [TR_LP] = {"lp", sizeof(tr_lp_t), tr_lp__fields, tr_countof(tr_lp__fields)},
+    [TR_MIXER] = {"mixer", sizeof(tr_mixer_t), tr_mixer__fields, tr_countof(tr_mixer__fields)},
+    [TR_NOISE] = {"noise", sizeof(tr_noise_t), tr_noise__fields, tr_countof(tr_noise__fields)},
+    [TR_QUANTIZER] = {"quantizer", sizeof(tr_quantizer_t), tr_quantizer__fields, tr_countof(tr_quantizer__fields)},
+    [TR_RANDOM] = {"random", sizeof(tr_random_t), tr_random__fields, tr_countof(tr_random__fields)},
+    [TR_SPEAKER] = {"speaker", sizeof(tr_speaker_t), tr_speaker__fields, tr_countof(tr_speaker__fields)},
+    [TR_SCOPE] = {"scope", sizeof(tr_scope_t), tr_scope__fields, tr_countof(tr_scope__fields)},
+};
+
 //
 // GUI
 //
@@ -527,6 +661,11 @@ typedef struct rack
     size_t gui_module_count;
 } rack_t;
 
+size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module)
+{
+    return module - rack->gui_modules;
+}
+
 size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
 {
     switch (type)
@@ -576,26 +715,6 @@ static void final_mix(int16_t* samples, const float* buffer)
         samples[i] = (int16_t)(buffer[i] * INT16_MAX);
     }
 }
-
-typedef struct tr_gui_modinfo
-{
-    const char* name;
-} tr_gui_modinfo_t;
-
-tr_gui_modinfo_t g_tr_gui_modinfo[TR_MODULE_COUNT] = {
-    [TR_VCO] = {"vco"},
-    [TR_VCA] = {"vca"},
-    [TR_CLOCK] = {"clock"},
-    [TR_SEQ8] = {"seq8"},
-    [TR_ADSR] = {"adsr"},
-    [TR_LP] = {"lp"},
-    [TR_QUANTIZER] = {"quantizer"},
-    [TR_MIXER] = {"mixer"},
-    [TR_SPEAKER] = {"speaker"},
-    [TR_NOISE] = {"noise"},
-    [TR_RANDOM] = {"random"},
-    [TR_SCOPE] = {"scope"},
-};
 
 typedef struct tr_cable_draw_command
 {
@@ -650,6 +769,533 @@ static const Color g_cable_colors[] =
     { 211, 176, 131, 255 },   // Beige
 };
 
+static Color tr_random_cable_color()
+{
+    return g_cable_colors[rand() % tr_countof(g_cable_colors)];
+}
+
+typedef struct tr_serialize_context
+{
+    rack_t* rack;
+    char* out;
+    size_t pos;
+} tr_serialize_context_t;
+
+void tr_serialize_input_float(tr_serialize_context_t* ctx, const char* name, float value)
+{
+    ctx->pos += sprintf(ctx->out + ctx->pos, "input %s %f\n", name, value);
+}
+
+void tr_serialize_input_int(tr_serialize_context_t* ctx, const char* name, int value)
+{
+    ctx->pos += sprintf(ctx->out + ctx->pos, "input %s %d\n", name, value);
+}
+
+void* tr_get_module_address(rack_t* rack, enum tr_module_type type, size_t index)
+{
+    void* pool_base_addr = NULL;
+
+    const tr_module_info_t* module_info = &tr_module_infos[type];
+
+    switch (type)
+    {
+        case TR_VCO: pool_base_addr = rack->vco.elements; break;
+        case TR_CLOCK: pool_base_addr = rack->clock.elements; break;
+        case TR_SEQ8: pool_base_addr = rack->seq8.elements; break;
+        case TR_ADSR: pool_base_addr = rack->adsr.elements; break;
+        case TR_VCA: pool_base_addr = rack->vca.elements; break;
+        case TR_LP: pool_base_addr = rack->lp.elements; break;
+        case TR_MIXER: pool_base_addr = rack->mixer.elements; break;
+        case TR_NOISE: pool_base_addr = rack->noise.elements; break;
+        case TR_QUANTIZER: pool_base_addr = rack->quantizer.elements; break;
+        case TR_RANDOM: pool_base_addr = rack->random.elements; break;
+        case TR_SPEAKER: pool_base_addr = rack->speaker.elements; break;
+        case TR_SCOPE: pool_base_addr = rack->scope.elements; break;
+    }
+    
+    void* module_addr = (uint8_t*)pool_base_addr + (index * module_info->struct_size);
+    return module_addr;
+}
+
+void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, const float** value)
+{
+    const float* buffer = *value;
+    if (buffer == NULL)
+    {
+        return;
+    }
+
+    const tr_output_plug_kv_t* plug_kv = hmgetp_null(g_input.output_plugs, buffer);
+    assert(plug_kv != NULL);
+    const tr_output_plug_t* plug = &plug_kv->value;
+
+    const size_t module_index = tr_get_gui_module_index(ctx->rack, plug->module);
+
+    const tr_module_info_t* module_info = &tr_module_infos[plug->module->type];
+
+    const void* module_addr = tr_get_module_address(ctx->rack, plug->module->type, plug->module->index);
+    const uintptr_t field_offset = (uintptr_t)buffer - (uintptr_t)module_addr;
+    
+    const tr_module_field_info_t* field_info = NULL;
+
+    for (int i = 0; i < module_info->field_count; ++i)
+    {
+        if (field_offset == module_info->fields[i].offset)
+        {
+            field_info = &module_info->fields[i];
+            break;
+        }
+    }
+    assert(field_info != NULL);
+    assert(field_info->type == TR_MODULE_FIELD_BUFFER);
+
+    const Color color = hmget(g_input.input_plugs, value).color;
+
+    ctx->pos += sprintf(ctx->out + ctx->pos, "input_buffer %s > %s %zu %s color %hhu %hhu %hhu\n", name, module_info->id, module_index, field_info->name, color.r, color.g, color.b);
+}
+
+size_t tr_rack_serialize(char* out, rack_t* rack)
+{
+    tr_serialize_context_t ctx = {rack, out};
+    
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        const tr_gui_module_t* module = &rack->gui_modules[i];
+        const char* name = tr_module_infos[module->type].id;
+        
+        ctx.pos += sprintf(out + ctx.pos, "module %s %zu pos %d %d\n", name, i, module->x, module->y);
+        
+        const void* module_addr = tr_get_module_address(rack, module->type, module->index);
+        
+        const tr_module_info_t* module_info = &tr_module_infos[module->type];
+        for (size_t field_index = 0; field_index < module_info->field_count; ++field_index)
+        {
+            const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+            if (field_info->type == TR_MODULE_FIELD_INPUT_FLOAT)
+            {
+                const float value = *(float*)((uint8_t*)module_addr + field_info->offset);
+                tr_serialize_input_float(&ctx, field_info->name, value);
+            }
+            else if (field_info->type == TR_MODULE_FIELD_INPUT_INT)
+            {
+                const int value = *(int*)((uint8_t*)module_addr + field_info->offset);
+                tr_serialize_input_int(&ctx, field_info->name, value);
+            }
+            else if (field_info->type == TR_MODULE_FIELD_INPUT_BUFFER)
+            {
+                const float** value = (float**)((uint8_t*)module_addr + field_info->offset);
+                tr_serialize_input_buffer(&ctx, field_info->name, value);
+            }
+        }
+    }
+
+    return ctx.pos;
+}
+
+typedef struct tr_tokenizer
+{
+    const char* buf;
+    size_t len;
+    size_t pos;
+} tr_tokenizer_t;
+
+typedef struct tr_token
+{
+    enum
+    {
+        TR_TOKEN_ID,
+        TR_TOKEN_NUMBER,
+        TR_TOKEN_ARROW,
+        TR_TOKEN_EOF,
+    } type;
+    size_t pos;
+    size_t len;
+} tr_token_t;
+
+const char* get_token_type_name(const tr_token_t* t)
+{
+    switch (t->type)
+    {
+        case TR_TOKEN_ID: return "ID";
+        case TR_TOKEN_NUMBER: return "NUMBER";
+        case TR_TOKEN_ARROW: return "ARROW";
+        case TR_TOKEN_EOF: return "EOF";
+        default: return NULL;
+    }
+}
+
+static const tr_token_t tr_eof_token = {TR_TOKEN_EOF};
+
+bool tr_advance(tr_tokenizer_t* t)
+{
+    if (t->pos >= t->len)
+    {
+        return false;
+    }
+
+    ++t->pos;
+    return true;
+}
+
+tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
+{
+    while (isspace(t->buf[t->pos]) || t->buf[t->pos] == '\n')
+    {
+        if (!tr_advance(t)) return tr_eof_token;
+    }
+    
+    if (t->pos >= t->len)
+    {
+        return tr_eof_token;
+    }
+
+    const char c = t->buf[t->pos];
+    if (c == '>')
+    {
+        const tr_token_t tok = {TR_TOKEN_ARROW, t->pos, 1};
+        if (!tr_advance(t)) return tr_eof_token;
+        return tok;
+    }
+    else if (isdigit(c))
+    {
+        const size_t start = t->pos;
+        while (isdigit(t->buf[t->pos]) || t->buf[t->pos] == '.')
+        {
+            if (!tr_advance(t)) return tr_eof_token;
+        }
+        const tr_token_t tok = {TR_TOKEN_NUMBER, start, t->pos - start};
+        return tok;
+    }
+    else if (isalpha(c))
+    {
+        const size_t start = t->pos;
+        while (isalnum(t->buf[t->pos]) || t->buf[t->pos] == '_')
+        {
+            if (!tr_advance(t)) return tr_eof_token;
+        }
+        const tr_token_t tok = {TR_TOKEN_ID, start, t->pos - start};
+        return tok;
+    }
+    else
+    {
+        printf("unexpected character: %c\n", t->buf[t->pos]);
+        assert(0);
+        return tr_eof_token;
+    }
+}
+
+tr_token_t tr_next_token(tr_tokenizer_t* t)
+{
+    tr_token_t tok = tr_next_token_internal(t);
+    printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
+    return tok;
+}
+
+int tr_token_strcmp(const char* buf, const tr_token_t* tok, const char* str)
+{
+    const size_t len = strlen(str);
+    if (tok->len != len)
+    {
+        return -1;
+    }
+
+    return strncmp(buf + tok->pos, str, len);
+}
+
+int tr_token_to_int(const char* buf, const tr_token_t* tok)
+{
+    assert(tok->type == TR_TOKEN_NUMBER);
+    char temp[64];
+    memcpy(temp, buf + tok->pos, tok->len);
+    temp[tok->len] = '\0';
+    return atoi(temp);
+}
+
+typedef struct tr_parser_cmd_add_module
+{
+    enum tr_module_type type;
+    int x, y;
+} tr_parser_cmd_add_module_t;
+
+typedef struct tr_parser_cmd_set_value
+{
+    enum 
+    {
+        TR_SET_VALUE_INT,
+        TR_SET_VALUE_FLOAT,
+        TR_SET_VALUE_BUFFER,
+    } type;
+
+    size_t module_index;
+    size_t field_offset;
+
+    // TR_SET_VALUE_INT
+    int int_value;
+
+    // TR_SET_VALUE_FLOAT
+    float float_value;
+
+    // TR_SET_VALUE_BUFFER
+    size_t target_module_index;
+    size_t target_field_offset;
+    Color color;
+} tr_parser_cmd_set_value_t;
+
+typedef struct tr_parser_cmd_connect
+{
+    size_t source_module_index;
+    size_t input_offset;
+    size_t target_module_index;
+    size_t buffer_offset;
+} tr_parser_cmd_connect_t;
+
+typedef struct tr_parser
+{
+    size_t module_count;
+    size_t value_count;
+    tr_parser_cmd_add_module_t modules[1024];
+    tr_parser_cmd_set_value_t values[1024];
+} tr_parser_t;
+
+int tr_parse_line(tr_parser_t* p, tr_tokenizer_t* t)
+{
+    tr_token_t tok = tr_next_token(t);
+    if (tok.type == TR_TOKEN_EOF)
+    {
+        return 1;
+    }
+
+    assert(tok.type == TR_TOKEN_ID);
+    
+    if (tr_token_strcmp(t->buf, &tok, "module") == 0)
+    {
+        tr_token_t module_id_tok = tr_next_token(t);
+        assert(module_id_tok.type == TR_TOKEN_ID);
+
+        tr_token_t module_index_tok = tr_next_token(t);
+        assert(module_index_tok.type == TR_TOKEN_NUMBER);
+
+        tr_token_t pos_tok = tr_next_token(t);
+        assert(pos_tok.type == TR_TOKEN_ID);
+        assert(tr_token_strcmp(t->buf, &pos_tok, "pos") == 0);
+
+        tr_token_t x_tok = tr_next_token(t);
+        assert(x_tok.type == TR_TOKEN_NUMBER);
+
+        tr_token_t y_tok = tr_next_token(t);
+        assert(y_tok.type == TR_TOKEN_NUMBER);
+        
+        enum tr_module_type module_type = TR_MODULE_COUNT;
+        for (int i = 0; i < TR_MODULE_COUNT; ++i)
+        {
+            if (tr_token_strcmp(t->buf, &module_id_tok, tr_module_infos[i].id) == 0)
+            {
+                module_type = i;
+                break;
+            }
+        }
+        assert(module_type != TR_MODULE_COUNT);
+        
+        p->modules[p->module_count++] = (tr_parser_cmd_add_module_t){
+            .type = module_type,
+            .x = tr_token_to_int(t->buf, &x_tok),
+            .y = tr_token_to_int(t->buf, &y_tok),
+        };
+    }
+    else if (tr_token_strcmp(t->buf, &tok, "input") == 0)
+    {
+        assert(p->module_count > 0);
+        const size_t module_index = p->module_count - 1;
+        const tr_module_info_t* module_info = &tr_module_infos[p->modules[module_index].type];
+
+        tr_token_t field_id_tok = tr_next_token(t);
+        assert(field_id_tok.type == TR_TOKEN_ID);
+        
+        const tr_module_field_info_t* field_info = NULL;
+
+        for (int i = 0; i < module_info->field_count; ++i)
+        {
+            if (tr_token_strcmp(t->buf, &field_id_tok, module_info->fields[i].name) == 0)
+            {
+                field_info = &module_info->fields[i];
+                break;
+            }
+        }
+        assert(field_info != NULL);
+        assert(field_info->type == TR_MODULE_FIELD_INPUT_FLOAT || field_info->type == TR_MODULE_FIELD_INPUT_INT);
+
+        tr_token_t field_value_tok = tr_next_token(t);
+        assert(field_value_tok.type == TR_TOKEN_NUMBER);
+        
+        tr_parser_cmd_set_value_t* value = &p->values[p->value_count++];
+        value->module_index = module_index;
+        value->field_offset = field_info->offset;
+        if (field_info->type == TR_MODULE_FIELD_INPUT_FLOAT)
+        {
+            value->type = TR_SET_VALUE_FLOAT;
+            value->float_value = (float)atof(t->buf + field_value_tok.pos);
+        }
+        else
+        {
+            value->type = TR_SET_VALUE_INT;
+            value->int_value = atoi(t->buf + field_value_tok.pos);
+        }
+    }
+    else if (tr_token_strcmp(t->buf, &tok, "input_buffer") == 0)
+    {
+        assert(p->module_count > 0);
+        const size_t module_index = p->module_count - 1;
+        const tr_module_info_t* module_info = &tr_module_infos[p->modules[module_index].type];
+
+        tr_token_t field_id_tok = tr_next_token(t);
+        assert(field_id_tok.type == TR_TOKEN_ID);
+        
+        const tr_module_field_info_t* field_info = NULL;
+        for (int i = 0; i < module_info->field_count; ++i)
+        {
+            if (tr_token_strcmp(t->buf, &field_id_tok, module_info->fields[i].name) == 0)
+            {
+                field_info = &module_info->fields[i];
+                break;
+            }
+        }
+        assert(field_info != NULL);
+        assert(field_info->type == TR_MODULE_FIELD_INPUT_BUFFER);
+
+        tr_token_t arrow_tok = tr_next_token(t);
+        assert(arrow_tok.type == TR_TOKEN_ARROW);
+
+        tr_token_t target_module_tok = tr_next_token(t);
+        assert(target_module_tok.type == TR_TOKEN_ID);
+
+        enum tr_module_type target_module_type = TR_MODULE_COUNT;
+        for (int i = 0; i < TR_MODULE_COUNT; ++i)
+        {
+            if (tr_token_strcmp(t->buf, &target_module_tok, tr_module_infos[i].id) == 0)
+            {
+                target_module_type = i;
+                break;
+            }
+        }
+        assert(target_module_type != TR_MODULE_COUNT);
+        const tr_module_info_t* target_module_info = &tr_module_infos[target_module_type];
+        
+        tr_token_t module_index_tok = tr_next_token(t);
+        assert(module_index_tok.type == TR_TOKEN_NUMBER);
+
+        tr_token_t target_field_tok = tr_next_token(t);
+        assert(target_field_tok.type == TR_TOKEN_ID);
+
+        const tr_module_field_info_t* target_field_info = NULL;
+        for (int i = 0; i < target_module_info->field_count; ++i)
+        {
+            if (tr_token_strcmp(t->buf, &target_field_tok, target_module_info->fields[i].name) == 0)
+            {
+                target_field_info = &target_module_info->fields[i];
+                break;
+            }
+        }
+        assert(target_field_info != NULL);
+        assert(target_field_info->type == TR_MODULE_FIELD_BUFFER);
+
+        tr_token_t color_id_tok = tr_next_token(t);
+        assert(color_id_tok.type == TR_TOKEN_ID);
+        assert(tr_token_strcmp(t->buf, &color_id_tok, "color") == 0);
+
+        const tr_token_t color_r_tok = tr_next_token(t);
+        const tr_token_t color_g_tok = tr_next_token(t);
+        const tr_token_t color_b_tok = tr_next_token(t);
+        const uint8_t r = (uint8_t)tr_token_to_int(t->buf, &color_r_tok);
+        const uint8_t g = (uint8_t)tr_token_to_int(t->buf, &color_g_tok);
+        const uint8_t b = (uint8_t)tr_token_to_int(t->buf, &color_b_tok);
+
+        p->values[p->value_count++] = (tr_parser_cmd_set_value_t){
+            .type = TR_SET_VALUE_BUFFER,
+            .module_index = module_index,
+            .field_offset = field_info->offset,
+            .target_module_index = tr_token_to_int(t->buf, &module_index_tok),
+            .target_field_offset = target_field_info->offset,
+            .color = {r, g, b, 0xff},
+        };
+    }
+
+    return 0;
+}
+
+void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
+{
+    memset(rack, 0, sizeof(rack_t));
+    
+    tr_tokenizer_t tokenizer = {input, len};
+    tr_parser_t parser = {0};
+
+    while (1)
+    {
+        if (tr_parse_line(&parser, &tokenizer))
+        {
+            break;
+        }
+    }
+    
+    for (size_t i = 0; i < parser.module_count; ++i)
+    {
+        const tr_parser_cmd_add_module_t* cmd = &parser.modules[i];
+
+        printf("ADD MODULE: %s %d %d\n", tr_module_infos[cmd->type].id, cmd->x, cmd->y);
+
+        tr_gui_module_t* module = tr_rack_create_module(rack, cmd->type);
+        module->x = cmd->x;
+        module->y = cmd->y;
+    }
+
+    for (size_t i = 0; i < parser.value_count; ++i)
+    {
+        const tr_parser_cmd_set_value_t* cmd = &parser.values[i];
+
+        const tr_gui_module_t* module = &rack->gui_modules[cmd->module_index];
+        void* module_addr = tr_get_module_address(rack, module->type, module->index);
+        void* field_addr = (uint8_t*)module_addr + cmd->field_offset;
+
+        switch (cmd->type)
+        {
+            case TR_SET_VALUE_FLOAT:
+                printf("SET FLOAT: %zu:%zu = %f\n", cmd->module_index, cmd->field_offset, cmd->float_value);
+                memcpy(field_addr, &cmd->float_value, sizeof(float));
+                break;
+            case TR_SET_VALUE_INT:
+                printf("SET INT: %zu:%zu = %d\n", cmd->module_index, cmd->field_offset, cmd->int_value);
+                memcpy(field_addr, &cmd->int_value, sizeof(int));
+                break;
+            case TR_SET_VALUE_BUFFER:
+                printf("SET BUFFER: %zu:%zu = %zu:%zu\n", cmd->module_index, cmd->field_offset, cmd->target_module_index, cmd->target_field_offset);
+                const tr_gui_module_t* target_module = &rack->gui_modules[cmd->target_module_index];
+                void* target_module_addr = tr_get_module_address(rack, target_module->type, target_module->index);
+                void* target_field_addr = (uint8_t*)target_module_addr + cmd->target_field_offset;
+                //*(float**)field_addr = (float*)target_field_addr;
+                memcpy(field_addr, &target_field_addr, sizeof(void*));
+
+                const tr_input_plug_t plug = {cmd->color};
+                hmput(g_input.input_plugs, field_addr, plug);
+                break;
+        }
+    }
+
+#if 0
+    while (1)
+    {
+        const tr_token_t tok = tr_next_token(&tokenizer);
+        if (tok.type == TR_TOKEN_EOF)
+        {
+            break;
+        }
+        
+        printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, input + tok.pos);
+    }
+#endif
+
+
+}
+
 void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
 {
     g_input.draw_module = module;
@@ -669,7 +1315,7 @@ void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
         DARKGRAY);
 
     DrawText(
-        g_tr_gui_modinfo[module->type].name, 
+        tr_module_infos[module->type].id, 
         module->x + TR_MODULE_PADDING * 2, 
         module->y + TR_MODULE_PADDING * 2,
         20,
@@ -793,7 +1439,7 @@ void tr_gui_plug_input(const float** value, int x, int y)
         if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
             g_input.drag_input = value;
-            g_input.drag_color = g_cable_colors[rand() % tr_countof(g_cable_colors)];
+            g_input.drag_color = tr_random_cable_color();
         }
     }
 
@@ -846,7 +1492,7 @@ void tr_gui_plug_output(const float* buffer, int x, int y)
         if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
             g_input.drag_output = buffer;
-            g_input.drag_color = g_cable_colors[rand() % tr_countof(g_cable_colors)];
+            g_input.drag_color = tr_random_cable_color();
         }
     }
 
@@ -890,7 +1536,7 @@ void tr_seq8_draw(tr_seq8_t* seq8, tr_gui_module_t* module)
     {
         const int kx = module->x + 50 + (i * (TR_KNOB_RADIUS*2 + 4));
         const int ky = module->y + 50;
-        tr_gui_knob(&seq8->in_cv[i], 0.001f, 1.0f, kx, ky);
+        tr_gui_knob(&seq8->in_cv_0 + i, 0.001f, 1.0f, kx, ky);
         DrawCircle(kx, ky + TR_KNOB_RADIUS + 8, 4.0f, seq8->step == i ? GREEN : BLACK);
     }
     tr_gui_plug_input(&seq8->in_step, module->x + 20, module->y + 50);
@@ -1072,11 +1718,6 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
         //printf("%s %zu\n", g_tr_gui_modinfo[module->type].name, module->index);
 #endif
     }
-}
-
-size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module)
-{
-    return module - rack->gui_modules;
 }
 
 void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const tr_gui_module_t* module)
@@ -1334,6 +1975,13 @@ void tr_frame_update_draw(void)
         g_input.camera.offset = Vector2Add(g_input.camera.offset, GetMouseDelta());
     }
 
+    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S))
+    {
+        char buffer[64 * 1024];
+        size_t len = tr_rack_serialize(buffer, rack);
+        printf("%.*s", (int)len, buffer);
+    }
+
     BeginDrawing();
     ClearBackground(BLACK);
 
@@ -1381,7 +2029,7 @@ void tr_frame_update_draw(void)
         const int menu_height = 42;
 
         DrawRectangle(0, 0, WIDTH, menu_height, GetColor(0x303030ff));
-        DrawText(g_tr_gui_modinfo[app->add_module_type].name, 0, 0, 40, WHITE);
+        DrawText(tr_module_infos[app->add_module_type].id, 0, 0, 40, WHITE);
 
 #ifdef TR_RECORDING_FEATURE
         const char* recording_text = app->is_recording ? "Press F5 to stop recording" : "Press F5 to start recording";
@@ -1453,12 +2101,82 @@ void tr_frame_update_draw(void)
 #endif
 
 #ifdef TR_TIMER_MODULE
-        const double ms = timer_reset(&timer);
-        printf("final_mix: %.3f us\n", ms * 1000.0);
+        //const double ms = timer_reset(&timer);
+        //printf("final_mix: %.3f us\n", ms * 1000.0);
 #endif
     }
 #endif
 }
+
+static const char* TEST = "\
+module speaker 0 pos 1014 368 \
+input_buffer in_audio > mixer 6 out_mix color 190 33 55 \
+module vco 1 pos 156 259 \
+input in_v0 0.000000 \
+module clock 2 pos 147 116 \
+input in_hz 6.008801 \
+module seq8 3 pos 313 107 \
+input_buffer in_step > clock 2 out_gate color 211 176 131 \
+input in_cv_0 0.000000 \
+input in_cv_1 0.480520 \
+input in_cv_2 0.640360 \
+input in_cv_3 0.000000 \
+input in_cv_4 0.000000 \
+input in_cv_5 0.580420 \
+input in_cv_6 0.000000 \
+input in_cv_7 0.680320 \
+module seq8 4 pos 318 270 \
+input_buffer in_step > clock 2 out_gate color 135 60 190 \
+input in_cv_0 0.000000 \
+input in_cv_1 0.330670 \
+input in_cv_2 0.000000 \
+input in_cv_3 0.619380 \
+input in_cv_4 0.000000 \
+input in_cv_5 0.000000 \
+input in_cv_6 0.470530 \
+input in_cv_7 0.820179 \
+module vco 5 pos 459 417 \
+input in_v0 314.000000 \
+input_buffer in_voct > quantizer 9 out_cv color 230 41 55 \
+module mixer 6 pos 835 177 \
+input_buffer in_0 > lp 7 out_audio color 190 33 55 \
+input_buffer in_1 > lp 14 out_audio color 0 228 48 \
+input_buffer in_2 > lp 13 out_audio color 135 60 190 \
+input in_vol0 0.270000 \
+input in_vol1 0.290000 \
+input in_vol2 0.410000 \
+input in_vol3 0.000000 \
+module lp 7 pos 704 417 \
+input_buffer in_audio > vco 5 out_saw color 0 228 48 \
+input_buffer in_cut > adsr 8 out_env color 0 228 48 \
+input in_cut0 0.100000 \
+input in_cut_mul 0.340000 \
+module adsr 8 pos 787 309 \
+input in_attack 0.001000 \
+input in_decay 0.070930 \
+input in_sustain 0.000000 \
+input in_release 0.240760 \
+input_buffer in_gate > clock 2 out_gate color 135 60 190 \
+module quantizer 9 pos 179 490 \
+input in_mode 1 \
+input_buffer in_cv > seq8 3 out_cv color 102 191 255 \
+module quantizer 10 pos 182 610 \
+input in_mode 1 \
+input_buffer in_cv > seq8 4 out_cv color 190 33 55 \
+module vco 11 pos 536 549 \
+input in_v0 314.000000 \
+input_buffer in_voct > quantizer 10 out_cv color 190 33 55 \
+module noise 12 pos 662 642 \
+module lp 13 pos 780 633 \
+input_buffer in_audio > noise 12 out_white color 190 33 55 \
+input_buffer in_cut > adsr 8 out_env color 211 176 131 \
+input in_cut0 0.010000 \
+input in_cut_mul 0.240000 \
+module lp 14 pos 731 519 \
+input_buffer in_audio > vco 11 out_saw color 230 41 55 \
+input_buffer in_cut > adsr 8 out_env color 0 228 48 \
+input in_cut0 0.000000 \
+input in_cut_mul 0.480000";
 
 int main()
 {
@@ -1466,7 +2184,10 @@ int main()
 
     app->rack = calloc(1, sizeof(rack_t));
     rack_init(app->rack);
-    
+
+    tr_rack_deserialize(app->rack, TEST, strlen(TEST));
+
+#if 1
     InitWindow(WIDTH, HEIGHT, "tinyrack");
 
     InitAudioDevice();
@@ -1494,6 +2215,7 @@ int main()
     {
         tr_frame_update_draw();
     }
+#endif
 #endif
 
     return 0;
