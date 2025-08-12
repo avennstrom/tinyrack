@@ -1977,9 +1977,10 @@ void tr_frame_update_draw(void)
 
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S))
     {
-        char buffer[64 * 1024];
+        char* buffer = malloc(1024 * 1024);
         size_t len = tr_rack_serialize(buffer, rack);
         printf("%.*s", (int)len, buffer);
+        free(buffer);
     }
 
     BeginDrawing();
