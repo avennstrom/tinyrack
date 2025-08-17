@@ -191,6 +191,7 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
             case TR_MODULE_FIELD_INPUT_FLOAT:
                 memcpy(get_field_address(rack, type, module->index, i), &field_info->default_value, sizeof(field_info->default_value));
                 break;
+            default: break;
         }
     }
 
@@ -890,17 +891,13 @@ void tr_gui_knob_float(rack_t* rack, const tr_module_field_info_t* field)
     const int x = g_input.draw_module->x + field->x;
     const int y = g_input.draw_module->y + field->y;
 
-    if (g_input.do_not_process_input)
-    {
-        tr_gui_knob_base(0.5f, 0.0f, 1.0f, x, y);
-    }
-    else
-    {
-        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
-        float* value = (float*)((uint8_t*)module_addr + field->offset);
-        const float min = field->min;
-        const float max = field->max;
+    void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+    float* value = (float*)((uint8_t*)module_addr + field->offset);
+    const float min = field->min;
+    const float max = field->max;
 
+    if (!g_input.do_not_process_input)
+    {
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
             const Vector2 center = {(float)x, (float)y};
@@ -918,9 +915,9 @@ void tr_gui_knob_float(rack_t* rack, const tr_module_field_info_t* field)
             if (*value < min) *value = min;
             if (*value > max) *value = max;
         }
-
-        tr_gui_knob_base(*value, min, max, x, y);
     }
+
+    tr_gui_knob_base(*value, min, max, x, y);
 }
 
 void tr_gui_knob_int(rack_t* rack, const tr_module_field_info_t* field)
@@ -982,13 +979,13 @@ void tr_gui_plug_input(rack_t* rack, const tr_module_field_info_t* field)
     //     inner_color = hmget(g_input.input_plugs, value).color;
     // }
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
+
+    void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+    const float** value = (const float**)((uint8_t*)module_addr + field->offset);
+    const Vector2 center = {(float)x, (float)y};
     
     if (!g_input.do_not_process_input)
     {
-        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
-        const float** value = (const float**)((uint8_t*)module_addr + field->offset);
-
-        const Vector2 center = {(float)x, (float)y};
         const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
 
         if (g_input.drag_output != NULL && 
@@ -1019,17 +1016,17 @@ void tr_gui_plug_input(rack_t* rack, const tr_module_field_info_t* field)
                 .color = ColorAlpha(g_input.drag_color, TR_CABLE_ALPHA),
             };
         }
+    }
 
-        if (*value != NULL)
-        {
-            const tr_output_plug_t plug = hmget(g_input.output_plugs, *value);
-            const tr_input_plug_t input_plug = hmget(g_input.input_plugs, value);
-            g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-                .from = center,
-                .to = {(float)plug.x, (float)plug.y},
-                .color = ColorAlpha(input_plug.color, TR_CABLE_ALPHA),
-            };
-        }
+    if (*value != NULL)
+    {
+        const tr_output_plug_t plug = hmget(g_input.output_plugs, *value);
+        const tr_input_plug_t input_plug = hmget(g_input.input_plugs, value);
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = {(float)plug.x, (float)plug.y},
+            .color = ColorAlpha(input_plug.color, TR_CABLE_ALPHA),
+        };
     }
 }
 
