@@ -231,7 +231,6 @@ typedef struct tr_gui_input
     Color drag_color;
     tr_output_plug_kv_t* output_plugs;
     tr_input_plug_kv_t* input_plugs;
-    tr_gui_module_t* draw_module;
     bool do_not_process_input;
 
     tr_cable_draw_command_t cable_draws[1024];
@@ -431,10 +430,10 @@ tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
         if (!tr_advance(t)) return tr_eof_token;
         return tok;
     }
-    else if (isdigit(c))
+    else if (isdigit(c) || c == '-')
     {
         const size_t start = t->pos;
-        while (isdigit(t->buf[t->pos]) || t->buf[t->pos] == '.')
+        while (isdigit(t->buf[t->pos]) || t->buf[t->pos] == '.' || t->buf[t->pos] == '-')
         {
             if (!tr_advance(t)) return tr_eof_token;
         }
@@ -818,8 +817,6 @@ void tr_gui_module_begin(tr_gui_module_t* module)
 
     const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
 
-    g_input.draw_module = module;
-
     if (g_input.drag_module == module)
     {
         module->x = (int)(g_input.drag_offset.x + mouse.x);
@@ -867,7 +864,6 @@ void tr_gui_module_begin(tr_gui_module_t* module)
 
 void tr_gui_module_end(void)
 {
-    g_input.draw_module = NULL;
 }
 
 void tr_gui_knob_base(float value, float min, float max, int x, int y)
@@ -886,12 +882,12 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y)
         COLOR_KNOB_TIP);
 }
 
-void tr_gui_knob_float(rack_t* rack, const tr_module_field_info_t* field)
+void tr_gui_knob_float(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
-    const int x = g_input.draw_module->x + field->x;
-    const int y = g_input.draw_module->y + field->y;
+    const int x = module->x + field->x;
+    const int y = module->y + field->y;
 
-    void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+    void* module_addr = tr_get_module_address(rack, module->type, module->index);
     float* value = (float*)((uint8_t*)module_addr + field->offset);
     const float min = field->min;
     const float max = field->max;
@@ -920,10 +916,10 @@ void tr_gui_knob_float(rack_t* rack, const tr_module_field_info_t* field)
     tr_gui_knob_base(*value, min, max, x, y);
 }
 
-void tr_gui_knob_int(rack_t* rack, const tr_module_field_info_t* field)
+void tr_gui_knob_int(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
-    const int x = g_input.draw_module->x + field->x;
-    const int y = g_input.draw_module->y + field->y;
+    const int x = module->x + field->x;
+    const int y = module->y + field->y;
 
     if (g_input.do_not_process_input)
     {
@@ -931,7 +927,7 @@ void tr_gui_knob_int(rack_t* rack, const tr_module_field_info_t* field)
     }
     else
     {
-        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+        void* module_addr = tr_get_module_address(rack, module->type, module->index);
         int* value = (int*)((uint8_t*)module_addr + field->offset);
         const int min = field->min_int;
         const int max = field->max_int;
@@ -960,10 +956,10 @@ void tr_gui_knob_int(rack_t* rack, const tr_module_field_info_t* field)
     }
 }
 
-void tr_gui_plug_input(rack_t* rack, const tr_module_field_info_t* field)
+void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
-    const int x = g_input.draw_module->x + field->x;
-    const int y = g_input.draw_module->y + field->y;
+    const int x = module->x + field->x;
+    const int y = module->y + field->y;
 
     const bool highlight = g_input.drag_output != NULL;
 
@@ -980,7 +976,7 @@ void tr_gui_plug_input(rack_t* rack, const tr_module_field_info_t* field)
     // }
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
 
-    void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+    void* module_addr = tr_get_module_address(rack, module->type, module->index);
     const float** value = (const float**)((uint8_t*)module_addr + field->offset);
     const Vector2 center = {(float)x, (float)y};
     
@@ -1030,10 +1026,10 @@ void tr_gui_plug_input(rack_t* rack, const tr_module_field_info_t* field)
     }
 }
 
-void tr_gui_plug_output(rack_t* rack, const tr_module_field_info_t* field)
+void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
-    const int x = g_input.draw_module->x + field->x;
-    const int y = g_input.draw_module->y + field->y;
+    const int x = module->x + field->x;
+    const int y = module->y + field->y;
 
     const bool highlight = g_input.drag_input != NULL;
     
@@ -1045,7 +1041,7 @@ void tr_gui_plug_output(rack_t* rack, const tr_module_field_info_t* field)
 
     if (!g_input.do_not_process_input)
     {
-        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+        void* module_addr = tr_get_module_address(rack, module->type, module->index);
         const float* buffer = (float*)((uint8_t*)module_addr + field->offset);
 
         const Vector2 center = {(float)x, (float)y};
@@ -1080,7 +1076,7 @@ void tr_gui_plug_output(rack_t* rack, const tr_module_field_info_t* field)
             };
         }
 
-        const tr_output_plug_t plug = {x, y, g_input.draw_module};
+        const tr_output_plug_t plug = {x, y, module};
         hmput(g_input.output_plugs, buffer, plug);
     }
 }
@@ -1153,10 +1149,10 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
         const tr_module_field_info_t* field_info = &module_info->fields[i];
         switch (field_info->type)
         {
-            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(rack, field_info); break;
-            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(rack, field_info); break;
-            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, field_info); break;
-            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, field_info); break;
+            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(rack, module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(rack, module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, module, field_info); break;
+            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, module, field_info); break;
         }
     }
 
@@ -1175,33 +1171,29 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
 
 void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
 {
-//#ifndef __EMSCRIPTEN__
     //printf("tr_update_modules:\n");
-//#endif
 
     for (size_t i = 0; i < count; ++i)
     {
         tr_gui_module_t* module = modules[i];
+        void* module_addr = tr_get_module_address(rack, module->type, module->index);
+
         switch (module->type)
         {
-            case TR_VCO: tr_vco_update(&rack->vco.elements[module->index]); break;
-            case TR_CLOCK: tr_clock_update(&rack->clock.elements[module->index]); break;
-            case TR_SEQ8: tr_seq8_update(&rack->seq8.elements[module->index]); break;
-            case TR_ADSR: tr_adsr_update(&rack->adsr.elements[module->index]); break;
-            case TR_VCA: tr_vca_update(&rack->vca.elements[module->index]); break;
-            case TR_LP: tr_lp_update(&rack->lp.elements[module->index]); break;
-            case TR_MIXER: tr_mixer_update(&rack->mixer.elements[module->index]); break;
-            case TR_NOISE: tr_noise_update(&rack->noise.elements[module->index]); break;
-            case TR_QUANTIZER: tr_quantizer_update(&rack->quantizer.elements[module->index]); break;
-            case TR_RANDOM: tr_random_update(&rack->random.elements[module->index]); break;
-            case TR_SPEAKER: break;
-            case TR_SCOPE: break;
-            case TR_MODULE_COUNT: assert(0);
+            case TR_VCO: tr_vco_update(module_addr); break;
+            case TR_CLOCK: tr_clock_update(module_addr); break;
+            case TR_SEQ8: tr_seq8_update(module_addr); break;
+            case TR_ADSR: tr_adsr_update(module_addr); break;
+            case TR_VCA: tr_vca_update(module_addr); break;
+            case TR_LP: tr_lp_update(module_addr); break;
+            case TR_MIXER: tr_mixer_update(module_addr); break;
+            case TR_NOISE: tr_noise_update(module_addr); break;
+            case TR_QUANTIZER: tr_quantizer_update(module_addr); break;
+            case TR_RANDOM: tr_random_update(module_addr); break;
+            default: break;
         }
 
-//#ifndef __EMSCRIPTEN__
         //printf("%s %zu\n", tr_module_infos[module->type].id, module->index);
-//#endif
     }
 }
 
@@ -1220,64 +1212,6 @@ void tr_enumerate_inputs(const float* inputs[], int* count, rack_t* rack, const 
             inputs[(*count)++] = *(float**)((uint8_t*)module_addr + field->offset);
         }
     }
-
-#if 0
-    switch (module->type)
-    {
-        case TR_VCO: {
-            const tr_vco_t* vco = &rack->vco.elements[module->index];
-            inputs[(*count)++] = vco->in_voct;
-            break;
-        }
-        case TR_SEQ8: {
-            const tr_seq8_t* seq8 = &rack->seq8.elements[module->index];
-            inputs[(*count)++] = seq8->in_step;
-            break;
-        }
-        case TR_SPEAKER: {
-            const tr_speaker_t* speaker = &rack->speaker.elements[module->index];
-            inputs[(*count)++] = speaker->in_audio;
-            break;
-        }
-        case TR_QUANTIZER: {
-            const tr_quantizer_t* quantizer = &rack->quantizer.elements[module->index];
-            inputs[(*count)++] = quantizer->in_cv;
-            break;
-        }
-        case TR_LP: {
-            const tr_lp_t* lp = &rack->lp.elements[module->index];
-            inputs[(*count)++] = lp->in_audio;
-            inputs[(*count)++] = lp->in_cut;
-            break;
-        }
-        case TR_ADSR: {
-            const tr_adsr_t* adsr = &rack->adsr.elements[module->index];
-            inputs[(*count)++] = adsr->in_gate;
-            break;
-        }
-        case TR_MIXER: {
-            const tr_mixer_t* mixer = &rack->mixer.elements[module->index];
-            inputs[(*count)++] = mixer->in_0;
-            inputs[(*count)++] = mixer->in_1;
-            inputs[(*count)++] = mixer->in_2;
-            inputs[(*count)++] = mixer->in_3;
-            break;
-        }
-        case TR_VCA: {
-            const tr_vca_t* vca = &rack->vca.elements[module->index];
-            inputs[(*count)++] = vca->in_audio;
-            inputs[(*count)++] = vca->in_cv;
-            break;
-        }
-        // these have no inputs
-        case TR_CLOCK:
-        case TR_NOISE:
-        case TR_SCOPE:
-        case TR_RANDOM:
-            break;
-        case TR_MODULE_COUNT: assert(0);
-    }
-#endif
 }
 
 typedef struct tr_module_sort_data
@@ -1286,13 +1220,54 @@ typedef struct tr_module_sort_data
     int distance;
 } tr_module_sort_data_t;
 
-int tr_update_module_sort_function(const void* lhs, const void* rhs)
+static int tr_update_module_sort_function(const void* lhs, const void* rhs)
 {
     return ((const tr_module_sort_data_t*)rhs)->distance - ((const tr_module_sort_data_t*)lhs)->distance;
 }
 
-size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack, const tr_gui_module_t* speaker)
+size_t tr_collect_leaf_modules(rack_t* rack, const tr_gui_module_t* leaf_modules[])
 {
+    uint32_t output_mask[TR_GUI_MODULE_COUNT / 32];
+    memset(output_mask, 0, sizeof(output_mask));
+    
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        const float* inputs[64];
+        int input_count;
+        tr_enumerate_inputs(inputs, &input_count, rack, &rack->gui_modules[i]);
+
+        for (int input_index = 0; input_index < input_count; ++input_index)
+        {
+            if (inputs[input_index] == NULL)
+            {
+                continue;
+            }
+
+            const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[input_index]);
+            const size_t module_index = tr_get_gui_module_index(rack, plug.module);
+            output_mask[module_index / 32] |= 1 << (module_index % 32);
+        }
+    }
+
+    size_t count = 0;
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        if (output_mask[i / 32] & (1 << (i % 32)))
+        {
+            continue;
+        }
+
+        leaf_modules[count++] = &rack->gui_modules[i];
+    }
+
+    return count;
+}
+
+size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
+{
+    const tr_gui_module_t* leaf_modules[TR_GUI_MODULE_COUNT];
+    const size_t leaf_count = tr_collect_leaf_modules(rack, leaf_modules);
+
     typedef struct stack_item
     {
         const tr_gui_module_t* module;
@@ -1302,118 +1277,72 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack, c
     stack_item_t stack[TR_GUI_MODULE_COUNT];
     int sp = 0;
 
-#if 1
-    (void)speaker;
-    // append leaf modules to the traversal stack (modules that have no connected outputs)
+    uint32_t distance[TR_GUI_MODULE_COUNT];
+    memset(distance, 0, sizeof(distance));
+
+    for (size_t leaf_index = 0; leaf_index < leaf_count; ++leaf_index)
     {
-        uint32_t output_mask[TR_GUI_MODULE_COUNT / 32];
-        memset(output_mask, 0, sizeof(output_mask));
-        
-        for (size_t i = 0; i < rack->gui_module_count; ++i)
+        assert(sp == 0);
+        stack[sp++] = (stack_item_t){leaf_modules[leaf_index]};
+
+        uint32_t visited_mask[TR_GUI_MODULE_COUNT / 32];
+        memset(visited_mask, 0, sizeof(visited_mask));
+
+        while (sp > 0)
         {
+            const stack_item_t top = stack[--sp];
+            const size_t module_index = tr_get_gui_module_index(rack, top.module);
+            
+            if (visited_mask[module_index / 32] & (1 << (module_index % 32)))
+            {
+                continue;
+            }
+
+            visited_mask[module_index / 32] |= (1 << (module_index % 32));
+
+            if (top.parent != NULL)
+            {
+                const size_t parent_module_index = tr_get_gui_module_index(rack, top.parent);
+                assert(visited_mask[parent_module_index / 32] & (1 << (parent_module_index % 32)));
+                const uint32_t next_distance = distance[parent_module_index] + 1;
+                if (distance[module_index] < next_distance)
+                {
+                    distance[module_index] = next_distance;
+                }
+            }
+
             const float* inputs[64];
             int input_count;
-            tr_enumerate_inputs(inputs, &input_count, rack, &rack->gui_modules[i]);
+            tr_enumerate_inputs(inputs, &input_count, rack, top.module);
 
-            for (int input_index = 0; input_index < input_count; ++input_index)
+            for (int i = 0; i < input_count; ++i)
             {
-                if (inputs[input_index] == NULL)
+                if (inputs[i] == NULL)
                 {
                     continue;
                 }
 
-                const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[input_index]);
-                const size_t module_index = tr_get_gui_module_index(rack, plug.module);
-                output_mask[module_index / 32] |= 1 << (module_index % 32);
+                const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[i]);
+
+                assert(sp < tr_countof(stack));
+                stack[sp++] = (stack_item_t){plug.module, top.module};
             }
-        }
-
-        for (size_t i = 0; i < rack->gui_module_count; ++i)
-        {
-            if (output_mask[i / 32] & (1 << (i % 32)))
-            {
-                continue;
-            }
-            stack[sp++] = (stack_item_t){&rack->gui_modules[i]};
-        }
-    }
-#else
-    stack[sp++] = (stack_item_t){speaker};
-#endif
-
-    uint32_t visited_mask[TR_GUI_MODULE_COUNT / 32];
-    memset(visited_mask, 0, sizeof(visited_mask));
-
-    uint32_t distance[TR_GUI_MODULE_COUNT];
-    memset(distance, 0, sizeof(distance));
-
-    while (sp > 0)
-    {
-        const stack_item_t top = stack[--sp];
-        const size_t module_index = tr_get_gui_module_index(rack, top.module);
-        
-        if (visited_mask[module_index / 32] & (1 << (module_index % 32)))
-        {
-            continue;
-        }
-
-        visited_mask[module_index / 32] |= (1 << (module_index % 32));
-
-        if (top.parent != NULL)
-        {
-            const size_t parent_module_index = tr_get_gui_module_index(rack, top.parent);
-            assert(visited_mask[parent_module_index / 32] & (1 << (parent_module_index % 32)));
-            const uint32_t next_distance = distance[parent_module_index] + 1;
-            if (distance[module_index] < next_distance)
-            {
-                distance[module_index] = next_distance;
-            }
-        }
-
-        const float* inputs[64];
-        int input_count;
-        tr_enumerate_inputs(inputs, &input_count, rack, top.module);
-
-        for (int i = 0; i < input_count; ++i)
-        {
-            if (inputs[i] == NULL)
-            {
-                continue;
-            }
-
-            const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[i]);
-
-            assert(sp < tr_countof(stack));
-            stack[sp++] = (stack_item_t){plug.module, top.module};
         }
     }
 
     tr_module_sort_data_t sort_data[TR_GUI_MODULE_COUNT];
-    size_t update_count = 0;
 
-    for (uint32_t mask_i = 0; mask_i < (TR_GUI_MODULE_COUNT / 32); ++mask_i)
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
-        if (visited_mask[mask_i] == 0)
-        {
-            continue;
-        }
-
-        const uint32_t mask = visited_mask[mask_i];
-        for (uint32_t bit = 0; bit < 32; ++bit)
-        {
-            if (mask & (1 << bit))
-            {
-                const uint32_t module_index = mask_i * 32 + bit;
-                sort_data[update_count++] = (tr_module_sort_data_t){module_index, distance[module_index]};
-            }
-        }
+        sort_data[i] = (tr_module_sort_data_t){(uint32_t)i, distance[i]};
     }
 
-    qsort(sort_data, update_count, sizeof(tr_module_sort_data_t), tr_update_module_sort_function);
+    qsort(sort_data, rack->gui_module_count, sizeof(tr_module_sort_data_t), tr_update_module_sort_function);
 
-    for (size_t i = 0; i < update_count; ++i)
+    size_t update_count = 0;
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
-        update_modules[i] = &rack->gui_modules[sort_data[i].module_index];
+        update_modules[update_count++] = &rack->gui_modules[sort_data[i].module_index];
     }
 
     return update_count;
@@ -1421,6 +1350,10 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack, c
 
 void tr_produce_final_mix(int16_t* output, rack_t* rack)
 {
+    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
+    const size_t update_count = tr_resolve_module_graph(update_modules, rack);
+    tr_update_modules(rack, update_modules, update_count);
+
     tr_gui_module_t* speaker = NULL;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
@@ -1438,11 +1371,6 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
         memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
         return;
     }
-
-    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
-    const size_t update_count = tr_resolve_module_graph(update_modules, rack, speaker);
-
-    tr_update_modules(rack, update_modules, update_count);
 
     assert(speaker->type == TR_SPEAKER);
     final_mix(output, rack->speaker.elements[speaker->index].in_audio);
@@ -1485,20 +1413,13 @@ void tr_audio_callback(void *bufferData, unsigned int frames)
 
 void DrawHangingCableQuadratic(Vector2 a, Vector2 b, float slack, float thick, Color color)
 {
-    // Keep slack in a sensible range
-    if (slack < 0.0f) slack = 0.0f;
-
     float L = Vector2Distance(a, b);
-    float sag = L * slack * 0.25f;      // 25% of L at slack=1; tune this factor to taste
-
-    // "Down" in screen coords (+Y). If your game uses a different gravity dir, change this.
-    Vector2 down = { 0.0f, 1.0f };
+    float sag = L * slack * 0.25f;
+    
+    Vector2 down = {0.0f, 1.0f};
     Vector2 sagVec = Vector2Scale(Vector2Normalize(down), sag);
-
-    // Control point = midpoint lowered by sag
     Vector2 mid = Vector2Lerp(a, b, 0.5f);
-    Vector2 c   = Vector2Add(mid, sagVec);
-
+    Vector2 c = Vector2Add(mid, sagVec);
     DrawSplineSegmentBezierQuadratic(a, c, b, thick, color);
 }
 
@@ -1725,19 +1646,78 @@ void tr_frame_update_draw(void)
 }
 
 static const char* TEST = "\
-module speaker 0 pos 640 360 \
+module speaker 0 pos 1357 -44 \
 input_buffer in_audio > mixer 2 out_mix color 255 153 148 \
-module vco 1 pos 343 358 \
-input in_v0 137.600006 \
-module mixer 2 pos 411 155 \
-input_buffer in_0 > vco 3 out_sin color 255 153 148 \
-input_buffer in_1 > vco 1 out_sin color 255 153 148 \
-input in_vol0 0.080000 \
-input in_vol1 0.100000 \
+module vco 1 pos 661 1 \
+input in_v0 118.000000 \
+input_buffer in_voct > quantizer 8 out_cv color 148 148 255 \
+module mixer 2 pos 1082 -49 \
+input_buffer in_0 > lp 13 out_audio color 255 153 148 \
+input_buffer in_1 > lp 11 out_audio color 148 148 255 \
+input in_vol0 0.370000 \
+input in_vol1 0.470000 \
 input in_vol2 0.000000 \
 input in_vol3 0.000000 \
-module vco 3 pos 136 288 \
-input in_v0 323.800049";
+input in_vol_final 1.000000 \
+module vco 3 pos 660 -173 \
+input in_v0 235.600113 \
+input_buffer in_voct > quantizer 7 out_cv color 148 148 255 \
+module clock 4 pos -143 -20 \
+input in_hz 6.008800 \
+module seq8 5 pos 10 -115 \
+input_buffer in_step > clock 4 out_gate color 255 153 148 \
+input in_cv_0 0.280000 \
+input in_cv_1 0.180000 \
+input in_cv_2 0.000000 \
+input in_cv_3 0.000000 \
+input in_cv_4 0.360000 \
+input in_cv_5 0.000000 \
+input in_cv_6 0.610000 \
+input in_cv_7 0.000000 \
+module seq8 6 pos 6 -8 \
+input_buffer in_step > clock 4 out_gate color 148 148 255 \
+input in_cv_0 0.000000 \
+input in_cv_1 0.280000 \
+input in_cv_2 0.000000 \
+input in_cv_3 0.000000 \
+input in_cv_4 0.460000 \
+input in_cv_5 0.000000 \
+input in_cv_6 0.000000 \
+input in_cv_7 0.690000 \
+module quantizer 7 pos 445 -129 \
+input in_mode 3 \
+input_buffer in_cv > seq8 5 out_cv color 255 153 148 \
+module quantizer 8 pos 446 -9 \
+input in_mode 3 \
+input_buffer in_cv > seq8 6 out_cv color 148 255 188 \
+module adsr 9 pos 799 130 \
+input in_attack 0.001000 \
+input in_decay 0.060940 \
+input in_sustain 0.000000 \
+input in_release 0.000000 \
+input_buffer in_gate > clock 4 out_gate color 255 153 148 \
+module adsr 10 pos 1690 370 \
+input in_attack 0.000000 \
+input in_decay 0.000000 \
+input in_sustain 0.000000 \
+input in_release 0.000000 \
+module lp 11 pos 779 9 \
+input_buffer in_audio > vco 1 out_saw color 255 153 148 \
+input_buffer in_cut > adsr 9 out_env color 148 148 255 \
+input in_cut0 0.000000 \
+input in_cut_mul 0.320000 \
+module vca 12 pos 1689 491 \
+module lp 13 pos 779 -111 \
+input_buffer in_audio > vco 3 out_saw color 148 255 188 \
+input_buffer in_cut > adsr 9 out_env color 255 153 148 \
+input in_cut0 0.000000 \
+input in_cut_mul 0.340000 \
+module scope 14 pos 1098 87 \
+input_buffer in_0 > lp 11 out_audio color 148 255 188 \
+module scope 15 pos 1475 -97 \
+input_buffer in_0 > mixer 2 out_mix color 148 148 255 \
+module scope 16 pos 1099 -288 \
+input_buffer in_0 > lp 13 out_audio color 148 255 188";
 
 int main()
 {
