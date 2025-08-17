@@ -28,19 +28,24 @@
 #include <assert.h>
 #include <raylib.h>
 #include <raymath.h>
+#include <time.h>
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
+
+#include "font.h"
 
 //
 // GUI
 //
 
+#define TR_MODULE_POOL_SIZE 1024
+
 #define RACK_MODULE_POOL(Type) \
     typedef struct Type##_pool \
     { \
         size_t count; \
-        Type##_t elements[1024]; \
+        Type##_t elements[TR_MODULE_POOL_SIZE]; \
     } Type##_pool_t;
 
 RACK_MODULE_POOL(tr_vco);
@@ -112,6 +117,41 @@ size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module
     return module - rack->gui_modules;
 }
 
+void* tr_get_module_address(rack_t* rack, enum tr_module_type type, size_t index)
+{
+    void* pool_base_addr = NULL;
+
+    const tr_module_info_t* module_info = &tr_module_infos[type];
+
+    switch (type)
+    {
+        case TR_VCO: pool_base_addr = rack->vco.elements; break;
+        case TR_CLOCK: pool_base_addr = rack->clock.elements; break;
+        case TR_SEQ8: pool_base_addr = rack->seq8.elements; break;
+        case TR_ADSR: pool_base_addr = rack->adsr.elements; break;
+        case TR_VCA: pool_base_addr = rack->vca.elements; break;
+        case TR_LP: pool_base_addr = rack->lp.elements; break;
+        case TR_MIXER: pool_base_addr = rack->mixer.elements; break;
+        case TR_NOISE: pool_base_addr = rack->noise.elements; break;
+        case TR_QUANTIZER: pool_base_addr = rack->quantizer.elements; break;
+        case TR_RANDOM: pool_base_addr = rack->random.elements; break;
+        case TR_SPEAKER: pool_base_addr = rack->speaker.elements; break;
+        case TR_SCOPE: pool_base_addr = rack->scope.elements; break;
+        default: assert(0);
+    }
+    
+    void* module_addr = (uint8_t*)pool_base_addr + (index * module_info->struct_size);
+    return module_addr;
+}
+
+void* get_field_address(rack_t* rack, enum tr_module_type type, size_t module_index, size_t field_index)
+{
+    const tr_module_info_t* module_info = &tr_module_infos[type];
+    void* module_addr = tr_get_module_address(rack, type, module_index);
+    const size_t field_offset = module_info->fields[field_index].offset;
+    return (uint8_t*)module_addr + field_offset;
+}
+
 size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
 {
     switch (type)
@@ -137,12 +177,24 @@ size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
 tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
 {
     assert(rack->gui_module_count < TR_GUI_MODULE_COUNT);
-    tr_gui_module_t* module = &rack->gui_modules[rack->gui_module_count++];
+    tr_gui_module_t* module = &rack->gui_modules[rack->gui_module_count];
     memset(module, 0, sizeof(tr_gui_module_t));
-
     module->type = type;
     module->index = tr_rack_allocate_module(rack, type);
+    
+    const tr_module_info_t* module_info = &tr_module_infos[type];
+    for (size_t i = 0; i < module_info->field_count; ++i)
+    {
+        const tr_module_field_info_t* field_info = &module_info->fields[i];
+        switch (field_info->type)
+        {
+            case TR_MODULE_FIELD_INPUT_FLOAT:
+                memcpy(get_field_address(rack, type, module->index, i), &field_info->default_value, sizeof(field_info->default_value));
+                break;
+        }
+    }
 
+    ++rack->gui_module_count;
     return module;
 }
 
@@ -156,7 +208,7 @@ static void final_mix(int16_t* samples, const float* buffer)
     assert(buffer != NULL);
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
-        samples[i] = (int16_t)(buffer[i] * INT16_MAX);
+        samples[i] = (int16_t)(Clamp(buffer[i], -1.0f, 1.0f) * INT16_MAX);
     }
 }
 
@@ -172,12 +224,14 @@ typedef struct tr_gui_input
     void* active_value;
     float active_int; // for int knob
     tr_gui_module_t* drag_module;
+    Vector2 drag_offset;
     const float** drag_input;
     const float* drag_output;
     Color drag_color;
     tr_output_plug_kv_t* output_plugs;
     tr_input_plug_kv_t* input_plugs;
     tr_gui_module_t* draw_module;
+    bool do_not_process_input;
 
     tr_cable_draw_command_t cable_draws[1024];
     size_t cable_draw_count;
@@ -189,28 +243,30 @@ static tr_gui_input_t g_input = {
     .camera.zoom = 1.0f,
 };
 
-#define TR_KNOB_RADIUS (18)
-#define TR_KNOB_PADDING (2)
-#define TR_PLUG_RADIUS (14)
-#define TR_PLUG_PADDING (4)
-#define TR_MODULE_PADDING (2)
+typedef struct app
+{
+    rack_t* rack;
+    AudioStream stream;
+#ifdef TR_RECORDING_FEATURE
+    bool is_recording;
+    int16_t* recording_samples;
+    size_t recording_offset;
+#endif
+#ifdef TR_AUDIO_CALLBACK
+    int16_t final_mix[TR_SAMPLE_COUNT];
+    size_t final_mix_remaining;
+#endif
+    bool picker_mode;
+} app_t;
 
-#define TR_PLUG_HIGHLIGHT_COLOR (GetColor(0xe0780fff))
+static app_t g_app = {0};
 
 static const Color g_cable_colors[] = 
 {
-    { 253, 249, 0, 255 },     // Yellow
-    { 255, 203, 0, 255 },     // Gold
-    { 255, 161, 0, 255 },     // Orange
-    { 255, 109, 194, 255 },   // Pink
-    { 230, 41, 55, 255 },     // Red
-    { 190, 33, 55, 255 },     // Maroon
-    { 0, 228, 48, 255 },      // Green
-    { 0, 158, 47, 255 },      // Lime
-    { 102, 191, 255, 255 },   // Sky Blue
-    { 200, 122, 255, 255 },   // Purple
-    { 135, 60, 190, 255 },    // Violet
-    { 211, 176, 131, 255 },   // Beige
+    { 255, 153, 148 },
+    { 148, 148, 255 },
+    { 148, 255, 188 },
+    { 170, 166, 151 },
 };
 
 static Color tr_random_cable_color()
@@ -233,32 +289,6 @@ void tr_serialize_input_float(tr_serialize_context_t* ctx, const char* name, flo
 void tr_serialize_input_int(tr_serialize_context_t* ctx, const char* name, int value)
 {
     ctx->pos += sprintf(ctx->out + ctx->pos, "input %s %d\n", name, value);
-}
-
-void* tr_get_module_address(rack_t* rack, enum tr_module_type type, size_t index)
-{
-    void* pool_base_addr = NULL;
-
-    const tr_module_info_t* module_info = &tr_module_infos[type];
-
-    switch (type)
-    {
-        case TR_VCO: pool_base_addr = rack->vco.elements; break;
-        case TR_CLOCK: pool_base_addr = rack->clock.elements; break;
-        case TR_SEQ8: pool_base_addr = rack->seq8.elements; break;
-        case TR_ADSR: pool_base_addr = rack->adsr.elements; break;
-        case TR_VCA: pool_base_addr = rack->vca.elements; break;
-        case TR_LP: pool_base_addr = rack->lp.elements; break;
-        case TR_MIXER: pool_base_addr = rack->mixer.elements; break;
-        case TR_NOISE: pool_base_addr = rack->noise.elements; break;
-        case TR_QUANTIZER: pool_base_addr = rack->quantizer.elements; break;
-        case TR_RANDOM: pool_base_addr = rack->random.elements; break;
-        case TR_SPEAKER: pool_base_addr = rack->speaker.elements; break;
-        case TR_SCOPE: pool_base_addr = rack->scope.elements; break;
-    }
-    
-    void* module_addr = (uint8_t*)pool_base_addr + (index * module_info->struct_size);
-    return module_addr;
 }
 
 void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, const float** value)
@@ -327,7 +357,7 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
             }
             else if (field_info->type == TR_MODULE_FIELD_INPUT_BUFFER)
             {
-                const float** value = (float**)((uint8_t*)module_addr + field_info->offset);
+                const float** value = (const float**)((uint8_t*)module_addr + field_info->offset);
                 tr_serialize_input_buffer(&ctx, field_info->name, value);
             }
         }
@@ -652,6 +682,9 @@ int tr_parse_line(tr_parser_t* p, tr_tokenizer_t* t)
         const uint8_t r = (uint8_t)tr_token_to_int(t->buf, &color_r_tok);
         const uint8_t g = (uint8_t)tr_token_to_int(t->buf, &color_g_tok);
         const uint8_t b = (uint8_t)tr_token_to_int(t->buf, &color_b_tok);
+        (void)r;
+        (void)g;
+        (void)b;
 
         p->values[p->value_count++] = (tr_parser_cmd_set_value_t){
             .type = TR_SET_VALUE_BUFFER,
@@ -659,27 +692,34 @@ int tr_parse_line(tr_parser_t* p, tr_tokenizer_t* t)
             .field_offset = field_info->offset,
             .target_module_index = tr_token_to_int(t->buf, &module_index_tok),
             .target_field_offset = target_field_info->offset,
-            .color = {r, g, b, 0xff},
+            //.color = {r, g, b, 0xff},
+            .color = tr_random_cable_color(),
         };
     }
 
     return 0;
 }
 
-void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
+void tr_parse(tr_parser_t* p, tr_tokenizer_t* t)
 {
-    memset(rack, 0, sizeof(rack_t));
-    
-    tr_tokenizer_t tokenizer = {input, len};
-    tr_parser_t parser = {0};
-
-    while (1)
+    for (;;)
     {
-        if (tr_parse_line(&parser, &tokenizer))
+        if (tr_parse_line(p, t))
         {
             break;
         }
     }
+}
+
+void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
+{
+    memset(rack, 0, sizeof(rack_t));
+    hmfree(g_input.input_plugs);
+    hmfree(g_input.output_plugs);
+    
+    tr_tokenizer_t tokenizer = {input, len};
+    tr_parser_t parser = {0};
+    tr_parse(&parser, &tokenizer);
     
     for (size_t i = 0; i < parser.module_count; ++i)
     {
@@ -690,6 +730,17 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
         tr_gui_module_t* module = tr_rack_create_module(rack, cmd->type);
         module->x = cmd->x;
         module->y = cmd->y;
+
+        const tr_module_info_t* module_info = &tr_module_infos[module->type];
+        for (size_t field_index = 0; field_index < module_info->field_count; ++field_index)
+        {
+            if (module_info->fields[field_index].type == TR_MODULE_FIELD_BUFFER)
+            {
+                const tr_output_plug_t p = {cmd->x, cmd->y, module};
+                float* field_addr = get_field_address(rack, module->type, module->index, field_index);
+                hmput(g_input.output_plugs, field_addr, p);
+            }
+        }
     }
 
     for (size_t i = 0; i < parser.value_count; ++i)
@@ -740,54 +791,89 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
 
 }
 
-void tr_gui_module_begin(tr_gui_module_t* module, int width, int height)
+#define TR_KNOB_RADIUS (18)
+#define TR_KNOB_PADDING (2)
+#define TR_PLUG_RADIUS (12)
+#define TR_PLUG_PADDING (4)
+#define TR_MODULE_PADDING (2)
+
+#define COLOR_BACKGROUND GetColor(0x3c5377ff)
+#define COLOR_MODULE_BACKGROUND GetColor(0xfff3c2ff)
+#define COLOR_MODULE_TEXT GetColor(0x3c5377ff)
+#define COLOR_PLUG_HOLE GetColor(0x303030ff)
+#define COLOR_PLUG_BORDER GetColor(0xa5a5a5ff)
+#define COLOR_PLUG_HIGHLIGHT GetColor(0xe0780fff)
+#define COLOR_PLUG_OUTPUT GetColor(0xddc55eff)
+#define COLOR_KNOB GetColor(0xddc55eff)
+#define COLOR_KNOB_TIP GetColor(0xffffffff)
+
+#define TR_CABLE_ALPHA 0.75f
+
+static Font g_font;
+
+void tr_gui_module_begin(tr_gui_module_t* module)
 {
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+
+    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+
     g_input.draw_module = module;
 
     if (g_input.drag_module == module)
     {
-        module->x += (int)GetMouseDelta().x;
-        module->y += (int)GetMouseDelta().y;
+        module->x = (int)(g_input.drag_offset.x + mouse.x);
+        module->y = (int)(g_input.drag_offset.y + mouse.y);
     }
 
-    DrawRectangle(module->x, module->y, width, height, GRAY);
-    DrawRectangle(
-        module->x + TR_MODULE_PADDING, 
-        module->y + TR_MODULE_PADDING, 
-        width - TR_MODULE_PADDING * 2,
-        height - TR_MODULE_PADDING * 2,
-        DARKGRAY);
+    Rectangle bgrect = {(float)module->x, (float)module->y, (float)module_info->width, (float)module_info->height};
+    DrawRectangleRounded(
+        bgrect, 
+        0.2f,
+        16,
+        COLOR_MODULE_BACKGROUND);
 
-    DrawText(
+    const char* name = tr_module_infos[module->type].id;
+    const float fontsize = 22;
+
+    const Vector2 textsize = MeasureTextEx(g_font, name, fontsize, 0);
+
+    DrawTextEx(
+        g_font,
         tr_module_infos[module->type].id, 
-        module->x + TR_MODULE_PADDING * 2, 
-        module->y + TR_MODULE_PADDING * 2,
-        20,
-        WHITE);
+        (Vector2){
+            (float)(module->x + module_info->width / 2 - textsize.x / 2),
+            (float)module->y + TR_MODULE_PADDING * 2},
+        fontsize,
+        0,
+        COLOR_MODULE_TEXT);
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    if (!g_input.do_not_process_input)
     {
-        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-        if (mouse.x > module->x &&
-            mouse.y > module->y &&
-            mouse.x < module->x + width && 
-            mouse.y < module->y + 20)
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
-            g_input.drag_module = module;
+            if (mouse.x > module->x &&
+                mouse.y > module->y &&
+                mouse.x < module->x + module_info->width &&
+                mouse.y < module->y + 26)
+            {
+                g_input.drag_module = module;
+                g_input.drag_offset.x = module->x - mouse.x;
+                g_input.drag_offset.y = module->y - mouse.y;
+            }
         }
     }
 }
 
 void tr_gui_module_end(void)
 {
+    g_input.draw_module = NULL;
 }
 
 void tr_gui_knob_base(float value, float min, float max, int x, int y)
 {
-    DrawCircle(x, y, TR_KNOB_RADIUS, LIGHTGRAY);
-    DrawCircle(x, y, TR_KNOB_RADIUS - TR_KNOB_PADDING, GRAY);
+    DrawCircle(x, y, TR_KNOB_RADIUS, COLOR_KNOB);
     
-    const float t = (value - min) / (max - min);
+    const float t = (value - min) / fmaxf(max - min, 0.01f);
     const float t0 = (t - 0.5f) * 0.9f;
     const float dot_x = sinf(t0 * TR_TWOPI);
     const float dot_y = cosf(t0 * TR_TWOPI);
@@ -796,293 +882,243 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y)
         (int)(x + dot_x * TR_KNOB_RADIUS*0.9f),
         (int)(y - dot_y * TR_KNOB_RADIUS*0.9f),
         4.0f,
-        ORANGE);
+        COLOR_KNOB_TIP);
 }
 
-void tr_gui_knob(float* value, float min, float max, int x, int y)
+void tr_gui_knob_float(rack_t* rack, const tr_module_field_info_t* field)
 {
-    tr_gui_knob_base(*value, min, max, x, y);
+    const int x = g_input.draw_module->x + field->x;
+    const int y = g_input.draw_module->y + field->y;
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    if (g_input.do_not_process_input)
     {
-        const Vector2 center = {(float)x, (float)y};
-        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-        if (Vector2Distance(mouse, center) < TR_KNOB_RADIUS)
+        tr_gui_knob_base(0.5f, 0.0f, 1.0f, x, y);
+    }
+    else
+    {
+        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+        float* value = (float*)((uint8_t*)module_addr + field->offset);
+        const float min = field->min;
+        const float max = field->max;
+
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
-            g_input.active_value = value;
+            const Vector2 center = {(float)x, (float)y};
+            const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+            if (Vector2Distance(mouse, center) < TR_KNOB_RADIUS)
+            {
+                g_input.active_value = value;
+            }
         }
-    }
-    
-    if (g_input.active_value == value)
-    {
-        const float range = (max - min);
-        *value -= GetMouseDelta().y * range * 0.01f;
-        if (*value < min) *value = min;
-        if (*value > max) *value = max;
-    }
-}
-
-void tr_gui_knob_int(int* value, int min, int max, int x, int y)
-{
-    tr_gui_knob_base((float)*value, (float)min, (float)max, x, y);
-
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-    {
-        const Vector2 center = {(float)x, (float)y};
-        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-        if (Vector2Distance(mouse, center) < TR_KNOB_RADIUS)
+        
+        if (g_input.active_value == value)
         {
-            g_input.active_value = value;
-            g_input.active_int = (float)*value;
+            const float range = (max - min);
+            *value -= GetMouseDelta().y * range * 0.01f;
+            if (*value < min) *value = min;
+            if (*value > max) *value = max;
         }
-    }
-    
-    if (g_input.active_value == value)
-    {
-        g_input.active_int -= GetMouseDelta().y * (max - min) * 0.01f;
 
-        *value = (int)roundf(g_input.active_int);
-        if (*value < min) *value = min;
-        if (*value > max) *value = max;
+        tr_gui_knob_base(*value, min, max, x, y);
     }
 }
 
-void tr_gui_plug_input(const float** value, int x, int y)
+void tr_gui_knob_int(rack_t* rack, const tr_module_field_info_t* field)
 {
+    const int x = g_input.draw_module->x + field->x;
+    const int y = g_input.draw_module->y + field->y;
+
+    if (g_input.do_not_process_input)
+    {
+        tr_gui_knob_base(0.0f, 0.0f, 1.0f, x, y);
+    }
+    else
+    {
+        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+        int* value = (int*)((uint8_t*)module_addr + field->offset);
+        const int min = field->min_int;
+        const int max = field->max_int;
+        
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        {
+            const Vector2 center = {(float)x, (float)y};
+            const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+            if (Vector2Distance(mouse, center) < TR_KNOB_RADIUS)
+            {
+                g_input.active_value = value;
+                g_input.active_int = (float)*value;
+            }
+        }
+        
+        if (g_input.active_value == value)
+        {
+            g_input.active_int -= GetMouseDelta().y * (max - min) * 0.01f;
+
+            *value = (int)roundf(g_input.active_int);
+            if (*value < min) *value = min;
+            if (*value > max) *value = max;
+        }
+
+        tr_gui_knob_base((float)*value, (float)min, (float)max, x, y);
+    }
+}
+
+void tr_gui_plug_input(rack_t* rack, const tr_module_field_info_t* field)
+{
+    const int x = g_input.draw_module->x + field->x;
+    const int y = g_input.draw_module->y + field->y;
+
     const bool highlight = g_input.drag_output != NULL;
 
-    DrawCircle(x, y, TR_PLUG_RADIUS, LIGHTGRAY);
+    DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
 
-    Color inner_color = DARKGRAY;
+    Color inner_color = COLOR_PLUG_HOLE;
     if (highlight)
     {
-        inner_color = TR_PLUG_HIGHLIGHT_COLOR;
+        inner_color = COLOR_PLUG_HIGHLIGHT;
     }
-    if (*value != NULL)
-    {
-        inner_color = hmget(g_input.input_plugs, value).color;
-    }
+    // if (*value != NULL)
+    // {
+    //     inner_color = hmget(g_input.input_plugs, value).color;
+    // }
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
     
-    const Vector2 center = {(float)x, (float)y};
-    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-
-    if (g_input.drag_output != NULL && 
-        IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
-        Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+    if (!g_input.do_not_process_input)
     {
-        *value = g_input.drag_output;
-        g_input.drag_output = NULL;
+        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+        const float** value = (const float**)((uint8_t*)module_addr + field->offset);
 
-        const tr_input_plug_t plug = {g_input.drag_color};
-        hmput(g_input.input_plugs, value, plug);
-    }
+        const Vector2 center = {(float)x, (float)y};
+        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-    {
-        if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+        if (g_input.drag_output != NULL && 
+            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
+            Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
-            g_input.drag_input = value;
-            g_input.drag_color = tr_random_cable_color();
+            *value = g_input.drag_output;
+            g_input.drag_output = NULL;
+
+            const tr_input_plug_t plug = {g_input.drag_color};
+            hmput(g_input.input_plugs, value, plug);
         }
-    }
 
-    if (g_input.drag_input == value)
-    {
-        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-            .from = center,
-            .to = mouse,
-            .color = g_input.drag_color,
-        };
-    }
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        {
+            if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+            {
+                g_input.drag_input = value;
+                g_input.drag_color = tr_random_cable_color();
+            }
+        }
 
-    if (*value != NULL)
-    {
-        const tr_output_plug_t plug = hmget(g_input.output_plugs, *value);
-        const tr_input_plug_t input_plug = hmget(g_input.input_plugs, value);
-        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-            .from = center,
-            .to = {(float)plug.x, (float)plug.y},
-            .color = ColorAlpha(input_plug.color, 0.65f),
-        };
+        if (g_input.drag_input == value)
+        {
+            g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+                .from = center,
+                .to = mouse,
+                .color = ColorAlpha(g_input.drag_color, TR_CABLE_ALPHA),
+            };
+        }
+
+        if (*value != NULL)
+        {
+            const tr_output_plug_t plug = hmget(g_input.output_plugs, *value);
+            const tr_input_plug_t input_plug = hmget(g_input.input_plugs, value);
+            g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+                .from = center,
+                .to = {(float)plug.x, (float)plug.y},
+                .color = ColorAlpha(input_plug.color, TR_CABLE_ALPHA),
+            };
+        }
     }
 }
 
-void tr_gui_plug_output(const float* buffer, int x, int y)
+void tr_gui_plug_output(rack_t* rack, const tr_module_field_info_t* field)
 {
+    const int x = g_input.draw_module->x + field->x;
+    const int y = g_input.draw_module->y + field->y;
+
     const bool highlight = g_input.drag_input != NULL;
     
-    const int rw = TR_PLUG_RADIUS + 2;
-    DrawRectangle(x - rw, y - rw, 2 * rw, 2 * rw, WHITE);
-    DrawCircle(x, y, TR_PLUG_RADIUS, LIGHTGRAY);
-    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, highlight ? TR_PLUG_HIGHLIGHT_COLOR : DARKGRAY);
+    const int rw = TR_PLUG_RADIUS + 4;
+    Rectangle bgrect = {(float)x - rw, (float)y - rw, 2.0f * rw, 2.0f * rw};
+    DrawRectangleRounded(bgrect, 0.25f, 8, COLOR_PLUG_OUTPUT);
+    DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
+    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, highlight ? COLOR_PLUG_HIGHLIGHT : COLOR_PLUG_HOLE);
 
-    const Vector2 center = {(float)x, (float)y};
-    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-
-    if (g_input.drag_input != NULL && 
-        IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
-        Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+    if (!g_input.do_not_process_input)
     {
-        const tr_input_plug_t plug = {g_input.drag_color};
-        hmput(g_input.input_plugs, g_input.drag_input, plug);
+        void* module_addr = tr_get_module_address(rack, g_input.draw_module->type, g_input.draw_module->index);
+        const float* buffer = (float*)((uint8_t*)module_addr + field->offset);
 
-        *g_input.drag_input = buffer;
-        g_input.drag_input = NULL;
-    }
-    
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-    {
-        if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+        const Vector2 center = {(float)x, (float)y};
+        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+
+        if (g_input.drag_input != NULL && 
+            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
+            Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
-            g_input.drag_output = buffer;
-            g_input.drag_color = tr_random_cable_color();
+            const tr_input_plug_t plug = {g_input.drag_color};
+            hmput(g_input.input_plugs, g_input.drag_input, plug);
+
+            *g_input.drag_input = buffer;
+            g_input.drag_input = NULL;
         }
+        
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        {
+            if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+            {
+                g_input.drag_output = buffer;
+                g_input.drag_color = tr_random_cable_color();
+            }
+        }
+
+        if (g_input.drag_output == buffer)
+        {
+            g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+                .from = center,
+                .to = mouse,
+                .color = ColorAlpha(g_input.drag_color, TR_CABLE_ALPHA),
+            };
+        }
+
+        const tr_output_plug_t plug = {x, y, g_input.draw_module};
+        hmput(g_input.output_plugs, buffer, plug);
     }
-
-    if (g_input.drag_output == buffer)
-    {
-        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-            .from = center,
-            .to = mouse,
-            .color = g_input.drag_color,
-        };
-    }
-
-    const tr_output_plug_t plug = {x, y, g_input.draw_module};
-    hmput(g_input.output_plugs, buffer, plug);
 }
 
-void tr_vco_draw(tr_vco_t* vco, tr_gui_module_t* module)
+void tr_led(int x, int y, Color color)
 {
-    assert(module->type == TR_VCO);
-    tr_gui_module_begin(module, 100, 200);
-    tr_gui_knob(&vco->in_v0, 20.0f, 1000.0f, module->x + 24, module->y + 50);
-    tr_gui_plug_input(&vco->in_voct, module->x + 20, module->y + 80);
-    tr_gui_plug_output(vco->out_sin, module->x + 70, module->y + 50);
-    tr_gui_plug_output(vco->out_saw, module->x + 70, module->y + 85);
-    tr_gui_plug_output(vco->out_sqr, module->x + 70, module->y + 120);
-    tr_gui_module_end();
+    DrawCircle(x, y, 4.0f, color);
 }
 
-void tr_clock_draw(tr_clock_t* clock, tr_gui_module_t* module)
+void tr_clock_decorate(tr_clock_t* clock, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module, 100, 100);
-    tr_gui_knob(&clock->in_hz, 0.01f, 50.0f, module->x + 24, module->y + 50);
-    tr_gui_plug_output(clock->out_gate, module->x + 70, module->y + 50);
-    tr_gui_module_end();
+    const int gate_x = module->x + tr_clock__fields[TR_CLOCK_out_gate].x;
+    const int gate_y = module->y + tr_clock__fields[TR_CLOCK_out_gate].y;
+    tr_led(gate_x, gate_y + TR_PLUG_RADIUS + 12, clock->phase < 0.5f ? GREEN : BLACK);
 }
 
-void tr_seq8_draw(tr_seq8_t* seq8, tr_gui_module_t* module)
+void tr_seq8_decorate(tr_seq8_t* seq8, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module, 400, 100);
     for (int i = 0; i < 8; ++i)
     {
-        const int kx = module->x + 50 + (i * (TR_KNOB_RADIUS*2 + 4));
-        const int ky = module->y + 50;
-        tr_gui_knob(&seq8->in_cv_0 + i, 0.001f, 1.0f, kx, ky);
-        DrawCircle(kx, ky + TR_KNOB_RADIUS + 8, 4.0f, seq8->step == i ? GREEN : BLACK);
+        const tr_module_field_info_t* field = &tr_module_infos[module->type].fields[TR_SEQ8_in_cv_0 + i];
+        tr_led(module->x + field->x, module->y + field->y + TR_KNOB_RADIUS + 8, seq8->step == i ? GREEN : BLACK);
     }
-    tr_gui_plug_input(&seq8->in_step, module->x + 20, module->y + 50);
-    tr_gui_plug_output(seq8->out_cv, module->x + 380, module->y + 50);
-    tr_gui_module_end();
 }
 
-void tr_adsr_draw(tr_adsr_t* adsr, tr_gui_module_t* module)
+void tr_quantizer_decorate(tr_quantizer_t* quantizer, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module, 200, 100);
-    const int x = module->x;
-    const int y = module->y;
-    tr_gui_knob(&adsr->in_attack, 0.001f, 1.0f, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&adsr->in_decay, 0.001f, 1.0f, x + 24 + (1 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&adsr->in_sustain, 0.0f, 1.0f, x + 24 + (2 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&adsr->in_release, 0.001f, 1.0f, x + 24 + (3 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_plug_input(&adsr->in_gate, x + 24, y + 80);
-    tr_gui_plug_output(adsr->out_env, x + 60, y + 80);
-    tr_gui_module_end();
-}
-
-void tr_vca_draw(tr_vca_t* vca, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 200, 100);
-    const int x = module->x;
-    const int y = module->y;
-    tr_gui_plug_input(&vca->in_audio, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_plug_input(&vca->in_cv, x + 24 + (1 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_plug_output(vca->out_mix, x + 24 + (2 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_module_end();
-}
-
-void tr_lp_draw(tr_lp_t* lp, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 250, 100);
-    const int x = module->x;
-    const int y = module->y;
-    tr_gui_knob(&lp->in_cut0, 0.0f, 1.0f, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&lp->in_cut_mul, 0.0f, 2.0f, x + 24 + (1 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_plug_input(&lp->in_audio, x + 110, y + 50);
-    tr_gui_plug_input(&lp->in_cut, x + 150, y + 50);
-    tr_gui_plug_output(lp->out_audio, x + 190, y + 50);
-    tr_gui_module_end();
-}
-
-void tr_mixer_draw(tr_mixer_t* mixer, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 250, 100);
-    const int x = module->x;
-    const int y = module->y;
-    tr_gui_knob(&mixer->in_vol0, 0.0f, 1.0f, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&mixer->in_vol1, 0.0f, 1.0f, x + 24 + (1 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&mixer->in_vol2, 0.0f, 1.0f, x + 24 + (2 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_knob(&mixer->in_vol3, 0.0f, 1.0f, x + 24 + (3 * (TR_KNOB_RADIUS*2+4)), y + 50);
-    tr_gui_plug_input(&mixer->in_0, x + 24 + (0 * (TR_KNOB_RADIUS*2+4)), y + 80);
-    tr_gui_plug_input(&mixer->in_1, x + 24 + (1 * (TR_KNOB_RADIUS*2+4)), y + 80);
-    tr_gui_plug_input(&mixer->in_2, x + 24 + (2 * (TR_KNOB_RADIUS*2+4)), y + 80);
-    tr_gui_plug_input(&mixer->in_3, x + 24 + (3 * (TR_KNOB_RADIUS*2+4)), y + 80);
-    tr_gui_plug_output(mixer->out_mix, x + 24 + (4 * (TR_KNOB_RADIUS*2+4)), y + 80);
-    tr_gui_module_end();
-}
-
-void tr_noise_draw(tr_noise_t* noise, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 100, 100);
-    tr_gui_plug_output(noise->out_white, module->x + 24, module->y + 50);
-    tr_gui_module_end();
-}
-
-void tr_random_draw(tr_random_t* random, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 100, 100);
-    tr_gui_knob(&random->in_speed, 0.0f, 10.0f, module->x + 24, module->y + 50);
-    tr_gui_plug_output(random->out_cv, module->x + 80, module->y + 50);
-    tr_gui_module_end();
-}
-
-void tr_quantizer_draw(tr_quantizer_t* quantizer, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 250, 100);
     const int x = module->x;
     const int y = module->y;
     const int kx = x + 24;
-    tr_gui_knob_int(&quantizer->in_mode, 0, TR_QUANTIZER_MODE_COUNT - 1, kx, y + 50);
-    DrawText(g_tr_quantizer_mode_name[quantizer->in_mode], kx + TR_KNOB_RADIUS + 8, y + 40, 20, WHITE);
-    tr_gui_plug_input(&quantizer->in_cv, x + 20, y + 80);
-    tr_gui_plug_output(quantizer->out_cv, x + 80, y + 80);
-    tr_gui_module_end();
+    DrawTextEx(g_font, g_tr_quantizer_mode_name[quantizer->in_mode], (Vector2){(float)kx + TR_KNOB_RADIUS + 8, (float)y + 40}, 20, 0, COLOR_MODULE_TEXT);
 }
 
-void tr_speaker_draw(tr_speaker_t* speaker, tr_gui_module_t* module)
+void tr_scope_decorate(tr_scope_t* scope, tr_gui_module_t* module)
 {
-    tr_gui_module_begin(module, 100, 100);
-    tr_gui_plug_input(&speaker->in_audio, module->x + 40, module->y + 50);
-    tr_gui_module_end();
-}
-
-void tr_scope_draw(tr_scope_t* scope, tr_gui_module_t* module)
-{
-    tr_gui_module_begin(module, 200, 220);
-    tr_gui_plug_input(&scope->in_0, module->x + TR_PLUG_RADIUS + 8, module->y + 220 - TR_PLUG_RADIUS - 8);
-    
     const int screen_x = module->x + 8;
     const int screen_y = module->y + 28;
     const int screen_w = 200 - 8*2;
@@ -1108,35 +1144,43 @@ void tr_scope_draw(tr_scope_t* scope, tr_gui_module_t* module)
             DrawLineEx((Vector2){x0, y0}, (Vector2){x1, y1}, 1.0f, YELLOW);
         }
     }
-
-    tr_gui_module_end();
 }
 
 void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
 {
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    tr_gui_module_begin(module);
+
+    for (int i = 0; i < module_info->field_count; ++i)
+    {
+        const tr_module_field_info_t* field_info = &module_info->fields[i];
+        switch (field_info->type)
+        {
+            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(rack, field_info); break;
+            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(rack, field_info); break;
+            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, field_info); break;
+            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, field_info); break;
+        }
+    }
+
+    void* module_addr = tr_get_module_address(rack, module->type, module->index);
     switch (module->type)
     {
-        case TR_VCO: tr_vco_draw(&rack->vco.elements[module->index], module); break;
-        case TR_CLOCK: tr_clock_draw(&rack->clock.elements[module->index], module); break;
-        case TR_SEQ8: tr_seq8_draw(&rack->seq8.elements[module->index], module); break;
-        case TR_ADSR: tr_adsr_draw(&rack->adsr.elements[module->index], module); break;
-        case TR_VCA: tr_vca_draw(&rack->vca.elements[module->index], module); break;
-        case TR_LP: tr_lp_draw(&rack->lp.elements[module->index], module); break;
-        case TR_MIXER: tr_mixer_draw(&rack->mixer.elements[module->index], module); break;
-        case TR_NOISE: tr_noise_draw(&rack->noise.elements[module->index], module); break;
-        case TR_QUANTIZER: tr_quantizer_draw(&rack->quantizer.elements[module->index], module); break;
-        case TR_RANDOM: tr_random_draw(&rack->random.elements[module->index], module); break;
-        case TR_SPEAKER: tr_speaker_draw(&rack->speaker.elements[module->index], module); break;
-        case TR_SCOPE: tr_scope_draw(&rack->scope.elements[module->index], module); break;
-        case TR_MODULE_COUNT: assert(0);
+        case TR_CLOCK: tr_clock_decorate(module_addr, module); break;
+        case TR_SEQ8: tr_seq8_decorate(module_addr, module); break;
+        case TR_QUANTIZER: tr_quantizer_decorate(module_addr, module); break;
+        case TR_SCOPE: tr_scope_decorate(module_addr, module); break;
+        default: break;
     }
+
+    tr_gui_module_end();
 }
 
 void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
 {
-#ifndef __EMSCRIPTEN__
+//#ifndef __EMSCRIPTEN__
     //printf("tr_update_modules:\n");
-#endif
+//#endif
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -1158,16 +1202,29 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
             case TR_MODULE_COUNT: assert(0);
         }
 
-#ifndef __EMSCRIPTEN__
-        //printf("%s %zu\n", g_tr_gui_modinfo[module->type].name, module->index);
-#endif
+//#ifndef __EMSCRIPTEN__
+        //printf("%s %zu\n", tr_module_infos[module->type].id, module->index);
+//#endif
     }
 }
 
-void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const tr_gui_module_t* module)
+void tr_enumerate_inputs(const float* inputs[], int* count, rack_t* rack, const tr_gui_module_t* module)
 {
     *count = 0;
 
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    const void* module_addr = tr_get_module_address(rack, module->type, module->index);
+
+    for (size_t i = 0; i < module_info->field_count; ++i)
+    {
+        const tr_module_field_info_t* field = &module_info->fields[i];
+        if (field->type == TR_MODULE_FIELD_INPUT_BUFFER)
+        {
+            inputs[(*count)++] = *(float**)((uint8_t*)module_addr + field->offset);
+        }
+    }
+
+#if 0
     switch (module->type)
     {
         case TR_VCO: {
@@ -1223,6 +1280,7 @@ void tr_enumerate_inputs(const float** inputs, int* count, rack_t* rack, const t
             break;
         case TR_MODULE_COUNT: assert(0);
     }
+#endif
 }
 
 typedef struct tr_module_sort_data
@@ -1317,7 +1375,7 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack, c
         }
     }
 
-    qsort(sort_data, update_count, sizeof(tr_gui_module_t*), tr_update_module_sort_function);
+    qsort(sort_data, update_count, sizeof(tr_module_sort_data_t), tr_update_module_sort_function);
 
     for (size_t i = 0; i < update_count; ++i)
     {
@@ -1356,24 +1414,6 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
     final_mix(output, rack->speaker.elements[speaker->index].in_audio);
 }
 
-typedef struct app
-{
-    rack_t* rack;
-    AudioStream stream;
-    enum tr_module_type add_module_type;
-#ifdef TR_RECORDING_FEATURE
-    bool is_recording;
-    int16_t* recording_samples;
-    size_t recording_offset;
-#endif
-#ifdef TR_AUDIO_CALLBACK
-    int16_t final_mix[TR_SAMPLE_COUNT];
-    size_t final_mix_remaining;
-#endif
-} app_t;
-
-static app_t g_app = {0};
-
 #ifdef TR_AUDIO_CALLBACK
 void tr_audio_callback(void *bufferData, unsigned int frames)
 {
@@ -1409,14 +1449,47 @@ void tr_audio_callback(void *bufferData, unsigned int frames)
 }
 #endif
 
+void DrawHangingCableQuadratic(Vector2 a, Vector2 b, float slack, float thick, Color color)
+{
+    // Keep slack in a sensible range
+    if (slack < 0.0f) slack = 0.0f;
+
+    float L = Vector2Distance(a, b);
+    float sag = L * slack * 0.25f;      // 25% of L at slack=1; tune this factor to taste
+
+    // "Down" in screen coords (+Y). If your game uses a different gravity dir, change this.
+    Vector2 down = { 0.0f, 1.0f };
+    Vector2 sagVec = Vector2Scale(Vector2Normalize(down), sag);
+
+    // Control point = midpoint lowered by sag
+    Vector2 mid = Vector2Lerp(a, b, 0.5f);
+    Vector2 c   = Vector2Add(mid, sagVec);
+
+    DrawSplineSegmentBezierQuadratic(a, c, b, thick, color);
+}
+
 void tr_frame_update_draw(void)
 {
     app_t* app = &g_app;
     rack_t* rack = app->rack;
 
-    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+#if 1
+    g_input.camera.offset.x = GetScreenWidth() * 0.5f;
+    g_input.camera.offset.y = GetScreenHeight() * 0.5f;
+#else
+    g_input.camera.offset = GetMousePosition();
+#endif
+
+    if (!app->picker_mode)
     {
-        g_input.camera.offset = Vector2Add(g_input.camera.offset, GetMouseDelta());
+        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+        {
+            g_input.camera.target.x -= GetMouseDelta().x / g_input.camera.zoom;
+            g_input.camera.target.y -= GetMouseDelta().y / g_input.camera.zoom;
+        }
+        
+        g_input.camera.zoom += GetMouseWheelMoveV().y * 0.2f;
+        g_input.camera.zoom = Clamp(g_input.camera.zoom, 0.2f, 4.0f);
     }
 
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S))
@@ -1427,23 +1500,43 @@ void tr_frame_update_draw(void)
         free(buffer);
     }
 
+    if (IsKeyPressed(KEY_TAB))
+    {
+        app->picker_mode = !app->picker_mode;
+    }
+
     BeginDrawing();
-    ClearBackground(BLACK);
+    ClearBackground(COLOR_BACKGROUND);
 
     BeginMode2D(g_input.camera);
 
+#if 0
+    {
+        const Vector2 m = GetMousePosition();
+        const Vector2 mw = GetScreenToWorld2D(m, g_input.camera);
+
+        DrawCircle((int)m.x, (int)m.y, 8.0f, RED);
+        DrawCircle((int)mw.x, (int)mw.y, 4.0f, GREEN);
+
+        printf("%d %d\n", (int)m.x, (int)m.y);
+    }
+#endif
+
     g_input.cable_draw_count = 0;
     
+    g_input.do_not_process_input = app->picker_mode;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
         tr_gui_module_draw(rack, &rack->gui_modules[i]);
     }
+    g_input.do_not_process_input = false;
 
     for (size_t i = 0; i < g_input.cable_draw_count; ++i)
     {
         const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
-        DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
+        //DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
         //DrawLineBezier(draw->from, draw->to, 6.0f, draw->color);
+        DrawHangingCableQuadratic(draw->from, draw->to, 1.0f, 6.0f, draw->color);
     }
 
     EndMode2D();
@@ -1459,16 +1552,57 @@ void tr_frame_update_draw(void)
         g_input.drag_input = NULL;
         g_input.drag_output = NULL;
     }
+
+    if (app->picker_mode)
+    {
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), ColorAlpha(BLACK, 0.7f));
+
+        g_input.do_not_process_input = true;
+
+        int x = 10;
+        int y = 10;
+
+        for (size_t i = 0; i < TR_MODULE_COUNT; ++i)
+        {
+            const tr_module_info_t* module_info = &tr_module_infos[i];
+            if (x + module_info->width >= GetScreenWidth())
+            {
+                x = 10;
+                y += 180;
+            }
+
+            tr_gui_module_t m = {x, y, i, .index = TR_MODULE_POOL_SIZE - 1};
+            tr_gui_module_draw(rack, &m);
+
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && 
+                g_input.drag_module == NULL)
+            {
+                const Vector2 mouse = GetMousePosition();
+                if (mouse.x > x && 
+                    mouse.y > y &&
+                    mouse.x < x + module_info->width && 
+                    mouse.y < y + module_info->height)
+                {
+                    tr_gui_module_t* module = tr_rack_create_module(rack, i);
+                    module->x = (int)mouse.x;
+                    module->y = (int)mouse.y;
+                    g_input.drag_module = module;
+                    g_input.drag_offset.x = -(mouse.x - x);
+                    g_input.drag_offset.y = -(mouse.y - y);
+                    app->picker_mode = false;
+                }
+            }
+
+            x += module_info->width + 10;
+        }
+
+        g_input.do_not_process_input = false;
+    }
     
     {
-        if (GetMouseWheelMoveV().y < 0.0f)
-        {
-            app->add_module_type += 1;
-        }
-        else if (GetMouseWheelMoveV().y > 0.0f)
-        {
-            app->add_module_type += TR_MODULE_COUNT - 1;
-        }
+        
+        
+#if 0
         app->add_module_type = app->add_module_type % TR_MODULE_COUNT;
 
         const int menu_height = 42;
@@ -1492,7 +1626,10 @@ void tr_frame_update_draw(void)
             module->x = (int)world_mouse.x;
             module->y = (int)world_mouse.y;
             g_input.drag_module = module;
+            g_input.drag_offset.x = 0.0f;
+            g_input.drag_offset.y = 0.0f;
         }
+#endif
     }
 
 #ifdef TR_RECORDING_FEATURE
@@ -1554,85 +1691,31 @@ void tr_frame_update_draw(void)
 }
 
 static const char* TEST = "\
-module speaker 0 pos 1014 368 \
-input_buffer in_audio > mixer 6 out_mix color 190 33 55 \
-module vco 1 pos 156 259 \
-input in_v0 0.000000 \
-module clock 2 pos 147 116 \
-input in_hz 6.008801 \
-module seq8 3 pos 313 107 \
-input_buffer in_step > clock 2 out_gate color 211 176 131 \
-input in_cv_0 0.000000 \
-input in_cv_1 0.480520 \
-input in_cv_2 0.640360 \
-input in_cv_3 0.000000 \
-input in_cv_4 0.000000 \
-input in_cv_5 0.580420 \
-input in_cv_6 0.000000 \
-input in_cv_7 0.680320 \
-module seq8 4 pos 318 270 \
-input_buffer in_step > clock 2 out_gate color 135 60 190 \
-input in_cv_0 0.000000 \
-input in_cv_1 0.330670 \
-input in_cv_2 0.000000 \
-input in_cv_3 0.619380 \
-input in_cv_4 0.000000 \
-input in_cv_5 0.000000 \
-input in_cv_6 0.470530 \
-input in_cv_7 0.820179 \
-module vco 5 pos 459 417 \
-input in_v0 314.000000 \
-input_buffer in_voct > quantizer 9 out_cv color 230 41 55 \
-module mixer 6 pos 835 177 \
-input_buffer in_0 > lp 7 out_audio color 190 33 55 \
-input_buffer in_1 > lp 14 out_audio color 0 228 48 \
-input_buffer in_2 > lp 13 out_audio color 135 60 190 \
-input in_vol0 0.270000 \
-input in_vol1 0.290000 \
-input in_vol2 0.410000 \
+module speaker 0 pos 640 360 \
+input_buffer in_audio > mixer 2 out_mix color 255 153 148 \
+module vco 1 pos 343 358 \
+input in_v0 137.600006 \
+module mixer 2 pos 411 155 \
+input_buffer in_0 > vco 3 out_sin color 255 153 148 \
+input_buffer in_1 > vco 1 out_sin color 255 153 148 \
+input in_vol0 0.080000 \
+input in_vol1 0.100000 \
+input in_vol2 0.000000 \
 input in_vol3 0.000000 \
-module lp 7 pos 704 417 \
-input_buffer in_audio > vco 5 out_saw color 0 228 48 \
-input_buffer in_cut > adsr 8 out_env color 0 228 48 \
-input in_cut0 0.100000 \
-input in_cut_mul 0.340000 \
-module adsr 8 pos 787 309 \
-input in_attack 0.001000 \
-input in_decay 0.070930 \
-input in_sustain 0.000000 \
-input in_release 0.240760 \
-input_buffer in_gate > clock 2 out_gate color 135 60 190 \
-module quantizer 9 pos 179 490 \
-input in_mode 1 \
-input_buffer in_cv > seq8 3 out_cv color 102 191 255 \
-module quantizer 10 pos 182 610 \
-input in_mode 1 \
-input_buffer in_cv > seq8 4 out_cv color 190 33 55 \
-module vco 11 pos 536 549 \
-input in_v0 314.000000 \
-input_buffer in_voct > quantizer 10 out_cv color 190 33 55 \
-module noise 12 pos 662 642 \
-module lp 13 pos 780 633 \
-input_buffer in_audio > noise 12 out_white color 190 33 55 \
-input_buffer in_cut > adsr 8 out_env color 211 176 131 \
-input in_cut0 0.010000 \
-input in_cut_mul 0.240000 \
-module lp 14 pos 731 519 \
-input_buffer in_audio > vco 11 out_saw color 230 41 55 \
-input_buffer in_cut > adsr 8 out_env color 0 228 48 \
-input in_cut0 0.000000 \
-input in_cut_mul 0.480000";
+module vco 3 pos 136 288 \
+input in_v0 323.800049";
 
 int main()
 {
     app_t* app = &g_app;
 
     app->rack = calloc(1, sizeof(rack_t));
-    //rack_init(app->rack);
+
+    srand((unsigned int)time(NULL));
 
 #if 0
     {
-        tr_gui_module_t* speaker0 = tr_rack_create_module(rack, TR_SPEAKER);
+        tr_gui_module_t* speaker0 = tr_rack_create_module(app->rack, TR_SPEAKER);
         speaker0->x = 1280 / 2;
         speaker0->y = 720 / 2;
     }
@@ -1640,8 +1723,17 @@ int main()
     tr_rack_deserialize(app->rack, TEST, strlen(TEST));
 #endif
 
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
+    int config_flags = FLAG_MSAA_4X_HINT;
+    config_flags |= FLAG_WINDOW_RESIZABLE;
+#ifdef __EMSCRIPTEN__
+    config_flags |= FLAG_WINDOW_MAXIMIZED;
+    //config_flags |= FLAG_WINDOW_HIGHDPI;
+#endif
+    SetConfigFlags(config_flags);
     InitWindow(1280, 720, "tinyrack");
+
+    g_font = LoadFontFromMemory(".ttf", berkeley_mono, (int)sizeof(berkeley_mono), 22, NULL, 0);
+    SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
 
     InitAudioDevice();
     assert(IsAudioDeviceReady());
@@ -1652,8 +1744,6 @@ int main()
     SetAudioStreamCallback(app->stream, tr_audio_callback);
 #endif
     PlayAudioStream(app->stream);
-
-    app->add_module_type = TR_VCO;
 
 #ifdef TR_RECORDING_FEATURE
     app->is_recording = false;

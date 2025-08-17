@@ -42,10 +42,9 @@ void tr_clock_update(tr_clock_t* clock)
 {
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
-        clock->phase += (clock->in_hz / TR_SAMPLE_RATE) * TR_TWOPI;
-        clock->phase = fmodf(clock->phase, TR_TWOPI);
-        const float s = sinf(clock->phase);
-        clock->out_gate[i] = signbit(s) ? 0.0f : 5.0f;
+        clock->phase += (clock->in_hz / TR_SAMPLE_RATE) * 1.0f;
+        clock->phase = fmodf(clock->phase, 1.0f);
+        clock->out_gate[i] = clock->phase < 0.5f ? 5.0f : 0.0f;
     }
 }
 
@@ -191,27 +190,51 @@ void tr_mixer_update(tr_mixer_t* mixer)
 
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
+        mixer->out_mix[i] *= mixer->in_vol_final;
+    }
+
+#if 0
+    for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
+    {
         mixer->out_mix[i] = tanhf(mixer->out_mix[i]);
     }
+#endif
 }
 
 //
 // tr_noise_t
 //
+#define TR_NOISE_RED_FC_HZ       5.0f
+#define TR_NOISE_BLUE_HP_FC_HZ   5.0f
+#define TR_NOISE_BLUE_TAME_FC_HZ 8000.0f
+
+static inline float tr_onepole_a_from_fc(float fc)
+{
+    return expf(-2.0f * (float)TR_PI * fc / (float)TR_SAMPLE_RATE);
+}
 
 void tr_noise_update(tr_noise_t* noise)
 {
+    const float a_red  = tr_onepole_a_from_fc(TR_NOISE_RED_FC_HZ);
+    const float b_red  = sqrtf(fmaxf(0.f, 1.f - a_red*a_red));
+    //const float a_hp   = tr_onepole_a_from_fc(TR_NOISE_BLUE_HP_FC_HZ);
+    //const float a_tame = tr_onepole_a_from_fc(TR_NOISE_BLUE_TAME_FC_HZ);
+
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
         noise->rng = noise->rng * 1664525u + 1013904223u;
-        noise->out_white[i] = (noise->rng / (float)UINT32_MAX) * 2.0f - 1.0f;
+        const float w = (noise->rng / (float)UINT32_MAX) * 2.0f - 1.0f;
+
+        noise->red_state = a_red * noise->red_state + b_red * w;
+
+        noise->out_white[i] = w;
+        noise->out_red[i] = noise->red_state;
     }
 }
 
 //
 // tr_quantizer_t
 //
-
 const uint8_t tr_quantizer_lut_minor[12] = {
     0, 0, 2, 3, 3, 5, 5, 7, 7, 9, 10, 10
 };

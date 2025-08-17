@@ -11,7 +11,10 @@
       }
       .emscripten { padding-right: 0; margin-left: auto; margin-right: auto; display: block; }
       /* the canvas *must not* have any border or padding, or mouse coords will be wrong */
-      canvas.emscripten { border: 0px none; background-color: black; }
+      canvas.emscripten { 
+        border: 0px none;
+        background-color: black;
+      }
 
       h1 {
         text-align: center;
@@ -110,6 +113,11 @@
         monitorRunDependencies(left) {
           this.totalDependencies = Math.max(this.totalDependencies, left);
           Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+        },
+        onRuntimeInitialized() {
+          setTimeout(() => {
+            GLFW.isHiDPIAware = () => true; // hack
+          }, 1);
         }
       };
       Module.setStatus('Downloading...');

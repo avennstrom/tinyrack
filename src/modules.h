@@ -114,6 +114,7 @@ typedef struct tr_mixer
     float in_vol1;
     float in_vol2;
     float in_vol3;
+    float in_vol_final;
 
     tr_buf out_mix;
 } tr_mixer_t;
@@ -122,8 +123,11 @@ void tr_mixer_update(tr_mixer_t* mixer);
 typedef struct tr_noise
 {
     uint32_t rng;
+    float red_state;
 
     tr_buf out_white;
+    tr_buf out_red;
+    //tr_buf 
 } tr_noise_t;
 void tr_noise_update(tr_noise_t* noise);
 
