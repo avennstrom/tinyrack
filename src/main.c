@@ -1302,7 +1302,44 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack, c
     stack_item_t stack[TR_GUI_MODULE_COUNT];
     int sp = 0;
 
+#if 1
+    (void)speaker;
+    // append leaf modules to the traversal stack (modules that have no connected outputs)
+    {
+        uint32_t output_mask[TR_GUI_MODULE_COUNT / 32];
+        memset(output_mask, 0, sizeof(output_mask));
+        
+        for (size_t i = 0; i < rack->gui_module_count; ++i)
+        {
+            const float* inputs[64];
+            int input_count;
+            tr_enumerate_inputs(inputs, &input_count, rack, &rack->gui_modules[i]);
+
+            for (int input_index = 0; input_index < input_count; ++input_index)
+            {
+                if (inputs[input_index] == NULL)
+                {
+                    continue;
+                }
+
+                const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[input_index]);
+                const size_t module_index = tr_get_gui_module_index(rack, plug.module);
+                output_mask[module_index / 32] |= 1 << (module_index % 32);
+            }
+        }
+
+        for (size_t i = 0; i < rack->gui_module_count; ++i)
+        {
+            if (output_mask[i / 32] & (1 << (i % 32)))
+            {
+                continue;
+            }
+            stack[sp++] = (stack_item_t){&rack->gui_modules[i]};
+        }
+    }
+#else
     stack[sp++] = (stack_item_t){speaker};
+#endif
 
     uint32_t visited_mask[TR_GUI_MODULE_COUNT / 32];
     memset(visited_mask, 0, sizeof(visited_mask));
