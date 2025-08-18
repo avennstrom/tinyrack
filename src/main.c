@@ -29,6 +29,7 @@
 #include <raylib.h>
 #include <raymath.h>
 #include <time.h>
+#include <float.h>
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
@@ -257,6 +258,7 @@ typedef struct app
     size_t final_mix_remaining;
 #endif
     bool picker_mode;
+    float fadein;
 } app_t;
 
 static app_t g_app = {0};
@@ -875,9 +877,11 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y)
     const float dot_x = sinf(t0 * TR_TWOPI);
     const float dot_y = cosf(t0 * TR_TWOPI);
     
-    DrawCircle(
-        (int)(x + dot_x * TR_KNOB_RADIUS*0.9f),
-        (int)(y - dot_y * TR_KNOB_RADIUS*0.9f),
+    DrawCircleV(
+        (Vector2){
+            (x + dot_x * TR_KNOB_RADIUS*0.9f),
+            (y - dot_y * TR_KNOB_RADIUS*0.9f),
+        },
         4.0f,
         COLOR_KNOB_TIP);
 }
@@ -1411,6 +1415,40 @@ void tr_audio_callback(void *bufferData, unsigned int frames)
 }
 #endif
 
+Rectangle ComputePatchBounds(rack_t* rack)
+{
+    if (rack->gui_module_count == 0)
+    {
+        return (Rectangle){0.0f};
+    }
+    
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+
+    for (size_t i = 0; i < rack->gui_module_count; ++i)
+    {
+        const tr_module_info_t* module_info = &tr_module_infos[rack->gui_modules[i].type];
+        float x = rack->gui_modules[i].x;
+        float y = rack->gui_modules[i].y;
+        float w = module_info->width;
+        float h = module_info->height;
+
+        min_x = fminf(min_x, x);
+        min_y = fminf(min_y, y);
+        max_x = fmaxf(max_x, x + w);
+        max_y = fmaxf(max_y, y + h);
+    }
+
+    return (Rectangle){
+        .x = min_x,
+        .y = min_y,
+        .width = max_x - min_x,
+        .height = max_y - min_y,
+    };
+}
+
 void DrawHangingCableQuadratic(Vector2 a, Vector2 b, float slack, float thick, Color color)
 {
     float L = Vector2Distance(a, b);
@@ -1735,6 +1773,9 @@ int main()
     }
 #else
     tr_rack_deserialize(app->rack, TEST, strlen(TEST));
+    const Rectangle bounds = ComputePatchBounds(app->rack);
+    g_input.camera.target.x = bounds.x + bounds.width * 0.5f;
+    g_input.camera.target.y = bounds.y + bounds.height * 0.5f;
 #endif
 
     int config_flags = FLAG_MSAA_4X_HINT;
@@ -1744,7 +1785,7 @@ int main()
     //config_flags |= FLAG_WINDOW_HIGHDPI;
 #endif
     SetConfigFlags(config_flags);
-    InitWindow(1280, 720, "tinyrack");
+    InitWindow(1280, 720, "rack.fm");
 
     g_font = LoadFontFromMemory(".ttf", berkeley_mono, (int)sizeof(berkeley_mono), 22, NULL, 0);
     SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
