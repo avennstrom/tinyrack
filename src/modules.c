@@ -49,6 +49,40 @@ void tr_clock_update(tr_clock_t* clock)
 }
 
 //
+// tr_clockdiv_t
+//
+
+void tr_clockdiv_update(tr_clockdiv_t* clockdiv)
+{
+    int gate = clockdiv->gate;
+    int state = clockdiv->state;
+
+    for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
+    {
+        const int g = clockdiv->in_gate != NULL ? clockdiv->in_gate[i] > 0.0f : 0;
+        const int edge = g && g != gate;
+        gate = g;
+        
+        if (edge)
+        {
+            state = (state + 1) & 0xff;
+        }
+        
+        clockdiv->out_0[i] = (state & 0b00000001) ? 1.0f : -1.0f;
+        clockdiv->out_1[i] = (state & 0b00000010) ? 1.0f : -1.0f;
+        clockdiv->out_2[i] = (state & 0b00000100) ? 1.0f : -1.0f;
+        clockdiv->out_3[i] = (state & 0b00001000) ? 1.0f : -1.0f;
+        clockdiv->out_4[i] = (state & 0b00010000) ? 1.0f : -1.0f;
+        clockdiv->out_5[i] = (state & 0b00100000) ? 1.0f : -1.0f;
+        clockdiv->out_6[i] = (state & 0b01000000) ? 1.0f : -1.0f;
+        clockdiv->out_7[i] = (state & 0b10000000) ? 1.0f : -1.0f;
+    }
+
+    clockdiv->gate = gate;
+    clockdiv->state = state;
+}
+
+//
 // tr_seq8_t
 //
 
@@ -59,7 +93,7 @@ void tr_seq8_update(tr_seq8_t* seq)
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
         const float gate = seq->in_step != NULL ? seq->in_step[i] : 0.0f;
-        const uint8_t trig = gate > 0.0f;
+        const int trig = gate > 0.0f;
         
         if (trig != seq->trig)
         {
@@ -78,6 +112,46 @@ void tr_seq8_update(tr_seq8_t* seq)
 // tr_adsr_t
 //
 
+enum
+{
+    TR_LUT_ADSR_DECAY,
+};
+
+
+
+void tr_adsr_lut_init(void)
+{
+
+}
+
+enum
+{
+    TR_ADSR_STATE_ATTACK,
+    TR_ADSR_STATE_DECAY,
+    TR_ADSR_STATE_SUSTAIN,
+    TR_ADSR_STATE_RELEASE,
+};
+
+static inline float tr__time_to_coeff(float t_sec)
+{
+    // t_sec == 0 → coeff 0 for instant jump
+    //if (t_sec <= 0.0f) return 0.0f;
+    float c = expf(-1.0f / (t_sec * (float)TR_SAMPLE_RATE));
+    // numerical guard
+    return Clamp(c, 0.0f, 1.0f);
+}
+
+static inline float map_knob_exp(float x, float t_min, float t_max, float skew)
+{
+    // raise the knob to 'skew' to compress the low end
+    float xs = powf(x, skew);
+    // exponential mapping across decades
+    float ratio = t_max / fmaxf(t_min, 1e-9f);
+    return t_min * powf(ratio, xs);
+}
+
+#define TR_ADSR_EPSILON (1e-5f)
+
 void tr_adsr_update(tr_adsr_t* adsr)
 {
     if (adsr->in_gate == NULL)
@@ -86,36 +160,59 @@ void tr_adsr_update(tr_adsr_t* adsr)
         return;
     }
 
+    const float a_coeff = tr__time_to_coeff(map_knob_exp(adsr->in_attack, 0.0005f, 10.0f, 1.5f));
+    const float d_coeff = tr__time_to_coeff(adsr->in_decay);
+    const float r_coeff = tr__time_to_coeff(map_knob_exp(adsr->in_release, 0.0005f, 10.0f, 1.2f));
+
+    float value = adsr->value;
+    int state = adsr->state;
+    int gate = adsr->gate;
+
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
-        if (adsr->in_gate[i] > 0.0f)
+        const int g = adsr->in_gate[i] > 0.0f;
+        const int edge = g != gate;
+        const int note_on = edge && g;
+        const int note_off = edge && !g;
+        
+        gate = g;
+
+        if (note_on)    state = TR_ADSR_STATE_ATTACK;
+        if (note_off)   state = TR_ADSR_STATE_RELEASE;
+        
+        switch (state)
         {
-            if (adsr->decay)
-            {
-                adsr->value -= (1.0f / TR_SAMPLE_RATE) / adsr->in_decay;
-                adsr->value = fmaxf(adsr->value, adsr->in_sustain);
-            }
-            else
-            {
-                adsr->value += (1.0f / TR_SAMPLE_RATE) / adsr->in_attack;
-                
-                if (adsr->value >= 1.0f)
-                {
-                    adsr->decay = 1;
+            case TR_ADSR_STATE_ATTACK:
+                value += (1.0f - value) * (1.0f - a_coeff);
+                if (value >= 1.0f - TR_ADSR_EPSILON) {
+                    value = 1.0f;
+                    state = TR_ADSR_STATE_DECAY;
                 }
-            }
-        }
-        else
-        {
-            adsr->value -= (1.0f / TR_SAMPLE_RATE) / adsr->in_release;
-            adsr->decay = 0;
+                break;
+            case TR_ADSR_STATE_DECAY:
+                value += (adsr->in_sustain - value) * (1.0f - d_coeff);
+                if (fabsf(value - adsr->in_sustain) <= TR_ADSR_EPSILON) {
+                    value = adsr->in_sustain;
+                    adsr->state = TR_ADSR_STATE_SUSTAIN;
+                }
+                break;
+            case TR_ADSR_STATE_SUSTAIN:
+                value += (adsr->in_sustain - value) * 0.001f;
+                break;
+            case TR_ADSR_STATE_RELEASE:
+                value += (0.0f - value) * (1.0f - r_coeff);
+                break;
         }
         
-        adsr->value = fminf(adsr->value, 1.0f);
-        adsr->value = fmaxf(adsr->value, 0.0f);
+        value = fminf(value, 1.0f);
+        value = fmaxf(value, 0.0f);
 
-        adsr->out_env[i] = adsr->value;
+        adsr->out_env[i] = value;
     }
+
+    adsr->value = value;
+    adsr->state = state;
+    adsr->gate = gate;
 }
 
 //
@@ -141,6 +238,42 @@ void tr_vca_update(tr_vca_t* vca)
 // tr_lp_t
 //
 
+static inline float tpt_lp1_process(float* z, float x, float cutoffHz)
+{
+    // Safety: clamp cutoff (avoid Nyquist and negatives)
+    //const float nyq = 0.5f * TR_SAMPLE_RATE;
+    if (cutoffHz < 0.0f) cutoffHz = 0.0f;
+    if (cutoffHz > 0.495f * TR_SAMPLE_RATE) cutoffHz = 0.495f * TR_SAMPLE_RATE;
+
+    // TPT coefficient: g = tan(pi * fc / fs)
+    const float g = tanf(TR_PI * cutoffHz / TR_SAMPLE_RATE);
+    const float a = g / (1.0f + g);      // bilinear transform form
+
+    // Zero-denormal trick: add tiny dc to break subnormals
+    const float x_nd = x + 1e-24f;
+
+    // One-pole TPT
+    float v = (x_nd - *z) * a;         // input to integrator
+    float y = v + *z;                  // output (lowpass)
+    *z = y + v;                        // update state (trapezoidal integration)
+
+    return y;
+}
+
+static inline float control_to_hz(float u, float minHz, float maxHz, float fs)
+{
+    // constrain and keep inside (0, Nyquist)
+    if (u < 0.0f) u = 0.0f; if (u > 1.0f) u = 1.0f;
+    if (maxHz > 0.495f * fs) maxHz = 0.495f * fs;
+    if (minHz < 0.0f) minHz = 0.0f;
+    if (minHz > maxHz) minHz = maxHz;
+
+    const float logMin = logf(fmaxf(minHz, 1e-6f));
+    const float logMax = logf(fmaxf(maxHz, 1e-6f));
+    const float fc = expf(logMin + (logMax - logMin) * u);
+    return fc;
+}
+
 void tr_lp_update(tr_lp_t* lp)
 {
     if (lp->in_audio == NULL)
@@ -152,18 +285,13 @@ void tr_lp_update(tr_lp_t* lp)
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
         float cut = lp->in_cut0;
-        if (lp->in_cut != NULL)
-        {
-            cut += lp->in_cut[i] * lp->in_cut_mul;
-        }
+        if (lp->in_cut != NULL) cut += lp->in_cut[i] * lp->in_cut_mul;
 
-        const float c = cut;
-        const float w = 1.0f - (c*c);
+        const float cutoff = control_to_hz(cut, 1.0f, 20000.0f, TR_SAMPLE_RATE);
 
-        lp->value = (lp->value * w) + ((1.0f - w) * lp->in_audio[i]);
-        lp->value = Clamp(lp->value, -10.0f, 10.0f);
+        const float y = tpt_lp1_process(&lp->z, lp->in_audio[i], cutoff);
         
-        lp->out_audio[i] = lp->value;
+        lp->out_audio[i] = y;
     }
 }
 

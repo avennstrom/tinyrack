@@ -1,7 +1,7 @@
 #pragma once
 
 #define TR_SAMPLE_RATE  44100
-#define TR_SAMPLE_COUNT (2048) // 2048/44100 ~= 46ms
+#define TR_SAMPLE_COUNT (1024) // 1024/44100 ~= 23ms
 
 #define TR_PI 3.141592f
 #define TR_TWOPI (2.0f * TR_PI)

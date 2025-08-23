@@ -1,5 +1,22 @@
 #include "timer.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+
+void timer_start(timer_t* timer)
+{
+    timer->last = emscripten_get_now();
+}
+
+double timer_reset(timer_t* timer)
+{
+    const double now = emscripten_get_now();
+    const double elapsed = now - timer->last;
+    timer->last = now;
+    return elapsed;
+}
+
+#else
 #include <Windows.h>
 
 void timer_start(timer_t* timer)
@@ -19,5 +36,7 @@ double timer_reset(timer_t* timer)
 
     timer->last = now.QuadPart;
 
-    return elapsed;
+    return elapsed * 1000.0;
 }
+
+#endif

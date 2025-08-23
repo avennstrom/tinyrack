@@ -6,6 +6,7 @@
 
 enum tr_vco_field
 {
+    TR_VCO_phase,
     TR_VCO_v0,
     TR_VCO_in_voct,
     TR_VCO_out_sin,
@@ -15,12 +16,30 @@ enum tr_vco_field
 };
 enum tr_clock_field
 {
+    TR_CLOCK_phase,
     TR_CLOCK_in_hz,
     TR_CLOCK_out_gate,
     TR_CLOCK_FIELD_COUNT,
 };
+enum tr_clockdiv_field
+{
+    TR_CLOCKDIV_gate,
+    TR_CLOCKDIV_state,
+    TR_CLOCKDIV_in_gate,
+    TR_CLOCKDIV_out_0,
+    TR_CLOCKDIV_out_1,
+    TR_CLOCKDIV_out_2,
+    TR_CLOCKDIV_out_3,
+    TR_CLOCKDIV_out_4,
+    TR_CLOCKDIV_out_5,
+    TR_CLOCKDIV_out_6,
+    TR_CLOCKDIV_out_7,
+    TR_CLOCKDIV_FIELD_COUNT,
+};
 enum tr_seq8_field
 {
+    TR_SEQ8_step,
+    TR_SEQ8_trig,
     TR_SEQ8_in_step,
     TR_SEQ8_in_cv_0,
     TR_SEQ8_in_cv_1,
@@ -35,6 +54,9 @@ enum tr_seq8_field
 };
 enum tr_adsr_field
 {
+    TR_ADSR_value,
+    TR_ADSR_gate,
+    TR_ADSR_state,
     TR_ADSR_in_attack,
     TR_ADSR_in_decay,
     TR_ADSR_in_sustain,
@@ -52,6 +74,8 @@ enum tr_vca_field
 };
 enum tr_lp_field
 {
+    TR_LP_value,
+    TR_LP_z,
     TR_LP_in_audio,
     TR_LP_in_cut,
     TR_LP_in_cut0,
@@ -75,6 +99,8 @@ enum tr_mixer_field
 };
 enum tr_noise_field
 {
+    TR_NOISE_rng,
+    TR_NOISE_red_state,
     TR_NOISE_out_white,
     TR_NOISE_out_red,
     TR_NOISE_FIELD_COUNT,
@@ -105,6 +131,8 @@ enum tr_scope_field
 
 enum tr_module_field_type
 {
+    TR_MODULE_FIELD_FLOAT,
+    TR_MODULE_FIELD_INT,
     TR_MODULE_FIELD_INPUT_FLOAT,
     TR_MODULE_FIELD_INPUT_INT,
     TR_MODULE_FIELD_INPUT_BUFFER,
@@ -126,6 +154,7 @@ typedef struct tr_module_field_info
 } tr_module_field_info_t;
 
 static const tr_module_field_info_t tr_vco__fields[TR_VCO_FIELD_COUNT] = {
+    [TR_VCO_phase] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_vco_t, phase), "phase"},
     [TR_VCO_v0] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_vco_t, in_v0), "in_v0", 24, 50, .min = 20.0f, .max = 1000.0f},
     [TR_VCO_in_voct] = {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_vco_t, in_voct), "in_voct", 20, 80},
     [TR_VCO_out_sin] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_vco_t, out_sin), "out_sin", 70, 50},
@@ -133,11 +162,28 @@ static const tr_module_field_info_t tr_vco__fields[TR_VCO_FIELD_COUNT] = {
     [TR_VCO_out_saw] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_vco_t, out_saw), "out_saw", 70, 120},
 };
 static const tr_module_field_info_t tr_clock__fields[TR_CLOCK_FIELD_COUNT] = {
+    [TR_CLOCK_phase] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_clock_t, phase), "phase"},
     [TR_CLOCK_in_hz] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_clock_t, in_hz), "in_hz", 24, 50, .min = 0.01f, .max = 50.0f},
     [TR_CLOCK_out_gate] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clock_t, out_gate), "out_gate", 70, 50},
 };
+#define TR_CLOCKDIV_PLUG_POS(i) (50 + (i * 40)), 50
+static const tr_module_field_info_t tr_clockdiv__fields[TR_CLOCKDIV_FIELD_COUNT] = {
+    [TR_CLOCKDIV_gate] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_clockdiv_t, gate), "gate"},
+    [TR_CLOCKDIV_state] = {TR_MODULE_FIELD_INT, offsetof(tr_clockdiv_t, state), "state"},
+    [TR_CLOCKDIV_in_gate] = {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_clockdiv_t, in_gate), "in_gate", TR_CLOCKDIV_PLUG_POS(0)},
+    [TR_CLOCKDIV_out_0] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_0), "out_0", TR_CLOCKDIV_PLUG_POS(1)},
+    [TR_CLOCKDIV_out_1] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_1), "out_1", TR_CLOCKDIV_PLUG_POS(2)},
+    [TR_CLOCKDIV_out_2] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_2), "out_2", TR_CLOCKDIV_PLUG_POS(3)},
+    [TR_CLOCKDIV_out_3] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_3), "out_3", TR_CLOCKDIV_PLUG_POS(4)},
+    [TR_CLOCKDIV_out_4] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_4), "out_4", TR_CLOCKDIV_PLUG_POS(5)},
+    [TR_CLOCKDIV_out_5] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_5), "out_5", TR_CLOCKDIV_PLUG_POS(6)},
+    [TR_CLOCKDIV_out_6] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_6), "out_6", TR_CLOCKDIV_PLUG_POS(7)},
+    [TR_CLOCKDIV_out_7] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_clockdiv_t, out_7), "out_7", TR_CLOCKDIV_PLUG_POS(8)},
+};
 #define TR_SEQ8_KNOB_POS(i) (50 + (i * 40)), 50
 static const tr_module_field_info_t tr_seq8__fields[TR_SEQ8_FIELD_COUNT] = {
+    [TR_SEQ8_step] = {TR_MODULE_FIELD_INT, offsetof(tr_seq8_t, step), "step"},
+    [TR_SEQ8_trig] = {TR_MODULE_FIELD_INT, offsetof(tr_seq8_t, trig), "trig"},
     [TR_SEQ8_in_step] = {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_seq8_t, in_step), "in_step", 20, 50},
     [TR_SEQ8_in_cv_0] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_0), "in_cv_0", TR_SEQ8_KNOB_POS(0), .min = 0.0f, .max = 1.0f},
     [TR_SEQ8_in_cv_1] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_seq8_t, in_cv_1), "in_cv_1", TR_SEQ8_KNOB_POS(1), .min = 0.0f, .max = 1.0f},
@@ -150,10 +196,13 @@ static const tr_module_field_info_t tr_seq8__fields[TR_SEQ8_FIELD_COUNT] = {
     [TR_SEQ8_out_cv] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_seq8_t, out_cv), "out_cv", 380, 50},
 };
 static const tr_module_field_info_t tr_adsr__fields[TR_ADSR_FIELD_COUNT] = {
-    [TR_ADSR_in_attack] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_attack), "in_attack", 24 + 0*40, 50, .min = 0.001f, .max = 1.0f},
-    [TR_ADSR_in_decay] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_decay), "in_decay", 24 + 1*40, 50, .min = 0.001f, .max = 1.0f},
-    [TR_ADSR_in_sustain] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_sustain), "in_sustain", 24 + 2*40, 50, .min = 0.0f, .max = 1.0f},
-    [TR_ADSR_in_release] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_release), "in_release", 24 + 3*40, 50, .min = 0.001f, .max = 1.0f},
+    [TR_ADSR_value] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_adsr_t, value), "value"},
+    [TR_ADSR_gate] = {TR_MODULE_FIELD_INT, offsetof(tr_adsr_t, gate), "gate"},
+    [TR_ADSR_state] = {TR_MODULE_FIELD_INT, offsetof(tr_adsr_t, state), "state"},
+    [TR_ADSR_in_attack] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_attack), "in_attack", 24 + 0*40, 50, .min = 0.001f, .max = 1.0f, .default_value = 0.001f},
+    [TR_ADSR_in_decay] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_decay), "in_decay", 24 + 1*40, 50, .min = 0.001f, .max = 1.0f, .default_value = 0.001f},
+    [TR_ADSR_in_sustain] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_sustain), "in_sustain", 24 + 2*40, 50, .min = 0.0f, .max = 1.0f, .default_value = 0.0f},
+    [TR_ADSR_in_release] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_adsr_t, in_release), "in_release", 24 + 3*40, 50, .min = 0.001f, .max = 1.0f, .default_value = 0.001f},
     [TR_ADSR_in_gate] = {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_adsr_t, in_gate), "in_gate", 24, 80},
     [TR_ADSR_out_env] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_adsr_t, out_env), "out_env", 60, 80},
 };
@@ -163,6 +212,8 @@ static const tr_module_field_info_t tr_vca__fields[TR_VCA_FIELD_COUNT] = {
     [TR_VCA_out_mix] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_vca_t, out_mix), "out_mix", 24 + 2*30, 50},
 };
 static const tr_module_field_info_t tr_lp__fields[TR_LP_FIELD_COUNT] = {
+    [TR_LP_value] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_lp_t, value), "value"},
+    [TR_LP_z] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_lp_t, z), "z"},
     [TR_LP_in_audio] = {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_lp_t, in_audio), "in_audio", 110, 50},
     [TR_LP_in_cut] = {TR_MODULE_FIELD_INPUT_BUFFER, offsetof(tr_lp_t, in_cut), "in_cut", 150, 50},
     [TR_LP_in_cut0] = {TR_MODULE_FIELD_INPUT_FLOAT, offsetof(tr_lp_t, in_cut0), "in_cut0", 24, 50, .min = 0.0f, .max = 1.0f},
@@ -182,6 +233,8 @@ static const tr_module_field_info_t tr_mixer__fields[TR_MIXER_FIELD_COUNT] = {
     [TR_MIXER_out_mix] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_mixer_t, out_mix), "out_mix", 24 + (4*40), 85},
 };
 static const tr_module_field_info_t tr_noise__fields[TR_NOISE_FIELD_COUNT] = {
+    [TR_NOISE_rng] = {TR_MODULE_FIELD_INT, offsetof(tr_noise_t, rng), "rng"},
+    [TR_NOISE_red_state] = {TR_MODULE_FIELD_FLOAT, offsetof(tr_noise_t, red_state), "red_state"},
     [TR_NOISE_out_white] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_noise_t, out_white), "out_white", 50, 50},
     [TR_NOISE_out_red] = {TR_MODULE_FIELD_BUFFER, offsetof(tr_noise_t, out_red), "out_red", 50, 80},
 };
@@ -214,6 +267,7 @@ typedef struct tr_module_info
 static const tr_module_info_t tr_module_infos[TR_MODULE_COUNT] = {
     [TR_VCO] = {"vco", sizeof(tr_vco_t), tr_vco__fields, tr_countof(tr_vco__fields), 100, 160},
     [TR_CLOCK] = {"clock", sizeof(tr_clock_t), tr_clock__fields, tr_countof(tr_clock__fields), 100, 100},
+    [TR_CLOCKDIV] = {"clockdiv", sizeof(tr_clockdiv_t), tr_clockdiv__fields, tr_countof(tr_clockdiv__fields), 400, 100},
     [TR_SEQ8] = {"seq8", sizeof(tr_seq8_t), tr_seq8__fields, tr_countof(tr_seq8__fields), 400, 100},
     [TR_ADSR] = {"adsr", sizeof(tr_adsr_t), tr_adsr__fields, tr_countof(tr_adsr__fields), 200, 100},
     [TR_VCA] = {"vca", sizeof(tr_vca_t), tr_vca__fields, tr_countof(tr_vca__fields), 200, 100},

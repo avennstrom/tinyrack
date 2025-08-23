@@ -1,68 +1,35 @@
-module speaker 0 pos 1014 368
-input_buffer in_audio > mixer 6 out_mix color 190 33 55
-module vco 1 pos 156 259
-input in_v0 0.000000
-module clock 2 pos 147 116
-input in_hz 6.008801
-module seq8 3 pos 313 107
-input_buffer in_step > clock 2 out_gate color 211 176 131
-input in_cv_0 0.000000
-input in_cv_1 0.480520
-input in_cv_2 0.640360
-input in_cv_3 0.000000
-input in_cv_4 0.000000
-input in_cv_5 0.580420
-input in_cv_6 0.000000
-input in_cv_7 0.680320
-module seq8 4 pos 318 270
-input_buffer in_step > clock 2 out_gate color 135 60 190
-input in_cv_0 0.000000
-input in_cv_1 0.330670
-input in_cv_2 0.000000
-input in_cv_3 0.619380
-input in_cv_4 0.000000
-input in_cv_5 0.000000
-input in_cv_6 0.470530
-input in_cv_7 0.820179
-module vco 5 pos 459 417
-input in_v0 314.000000
-input_buffer in_voct > quantizer 9 out_cv color 230 41 55
-module mixer 6 pos 835 177
-input_buffer in_0 > lp 7 out_audio color 190 33 55
-input_buffer in_1 > lp 14 out_audio color 0 228 48
-input_buffer in_2 > lp 13 out_audio color 135 60 190
-input in_vol0 0.270000
-input in_vol1 0.290000
-input in_vol2 0.410000
-input in_vol3 0.000000
-module lp 7 pos 704 417
-input_buffer in_audio > vco 5 out_saw color 0 228 48
-input_buffer in_cut > adsr 8 out_env color 0 228 48
-input in_cut0 0.100000
-input in_cut_mul 0.340000
-module adsr 8 pos 787 309
-input in_attack 0.001000
-input in_decay 0.070930
-input in_sustain 0.000000
-input in_release 0.240760
-input_buffer in_gate > clock 2 out_gate color 135 60 190
-module quantizer 9 pos 179 490
-input in_mode 1
-input_buffer in_cv > seq8 3 out_cv color 102 191 255
-module quantizer 10 pos 182 610
-input in_mode 1
-input_buffer in_cv > seq8 4 out_cv color 190 33 55
-module vco 11 pos 536 549
-input in_v0 314.000000
-input_buffer in_voct > quantizer 10 out_cv color 190 33 55
-module noise 12 pos 662 642
-module lp 13 pos 780 633
-input_buffer in_audio > noise 12 out_white color 190 33 55
-input_buffer in_cut > adsr 8 out_env color 211 176 131
-input in_cut0 0.010000
-input in_cut_mul 0.240000
-module lp 14 pos 731 519
-input_buffer in_audio > vco 11 out_saw color 230 41 55
-input_buffer in_cut > adsr 8 out_env color 0 228 48
-input in_cut0 0.000000
-input in_cut_mul 0.480000
+module speaker 0 pos 239 524 tinyrack.html:87:19
+input_buffer in_audio > mixer 2 out_mix color 148 255 188 tinyrack.html:87:19
+module vco 1 pos -151 291 tinyrack.html:87:19
+input in_v0 323.799957 tinyrack.html:87:19
+input_buffer in_voct > quantizer 5 out_cv color 170 166 151 tinyrack.html:87:19
+module mixer 2 pos -35 516 tinyrack.html:87:19
+input_buffer in_0 > lp 10 out_audio color 255 153 148 tinyrack.html:87:19
+input_buffer in_1 > lp 11 out_audio color 170 166 151 tinyrack.html:87:19
+input_buffer in_2 > vco 15 out_sin color 170 166 151 tinyrack.html:87:19
+input in_vol0 0.150000 tinyrack.html:87:19
+input in_vol1 0.160000 tinyrack.html:87:19
+input in_vol2 0.000000 tinyrack.html:87:19
+input in_vol3 0.000000 tinyrack.html:87:19
+module vco 3 pos -264 287 tinyrack.html:87:19
+input in_v0 323.800049 tinyrack.html:87:19
+input_buffer in_voct > quantizer 4 out_cv color 148 148 255 tinyrack.html:87:19
+module quantizer 4 pos 151 59 tinyrack.html:87:19
+input in_mode 3 tinyrack.html:87:19
+input_buffer in_cv > seq8 6 out_cv color 148 255 188 tinyrack.html:87:19
+module quantizer 5 pos 148 174 tinyrack.html:87:19
+input in_mode 3 tinyrack.html:87:19
+input_buffer in_cv > seq8 7 out_cv color 170 166 151 tinyrack.html:87:19
+module seq8 6 pos -264 59 tinyrack.html:87:19
+input_buffer in_step > clock 8 out_gate color 170 166 151 tinyrack.html:87:19
+input in_cv_0 0.459540 tinyrack.html:87:19
+input in_cv_1 0.210790 tinyrack.html:87:19
+input in_cv_2 0.470530 tinyrack.html:87:19
+input in_cv_3 0.319680 tinyrack.html:87:19
+input in_cv_4 0.700300 tinyrack.html:87:19
+input in_cv_5 0.529470 tinyrack.html:87:19
+input in_cv_6 0.239760 tinyrack.html:87:19
+input in_cv_7 0.530470 tinyrack.html:87:19
+module seq8 7 pos -264 172 tinyrack.html:87:19
+input_buffer in_step > clock 8 out_gate color 148 148 255 tinyrack.html:87:19
+input in_cv_0 0.000000 tinyrack.html:87:19

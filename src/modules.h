@@ -8,6 +8,7 @@ enum tr_module_type
 {
     TR_VCO,
     TR_CLOCK,
+    TR_CLOCKDIV,
     TR_SEQ8,
     TR_ADSR,
     TR_VCA,
@@ -46,10 +47,28 @@ typedef struct tr_clock
 } tr_clock_t;
 void tr_clock_update(tr_clock_t* clock);
 
+typedef struct tr_clockdiv
+{
+    int gate;
+    int state;
+
+    const float* in_gate;
+
+    tr_buf out_0;
+    tr_buf out_1;
+    tr_buf out_2;
+    tr_buf out_3;
+    tr_buf out_4;
+    tr_buf out_5;
+    tr_buf out_6;
+    tr_buf out_7;
+} tr_clockdiv_t;
+void tr_clockdiv_update(tr_clockdiv_t* clockdiv);
+
 typedef struct tr_seq8
 {
-    uint8_t step;
-    uint8_t trig;
+    int step;
+    int trig;
 
     const float* in_step;
     float in_cv_0;
@@ -68,7 +87,8 @@ void tr_seq8_update(tr_seq8_t* seq);
 typedef struct tr_adsr
 {
     float value;
-    int decay;
+    int gate;
+    int state;
 
     float in_attack;
     float in_decay;
@@ -93,6 +113,7 @@ void tr_vca_update(tr_vca_t* vca);
 typedef struct tr_lp
 {
     float value;
+    float z;
 
     const float* in_audio;
     const float* in_cut;
