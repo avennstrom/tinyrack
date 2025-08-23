@@ -44,7 +44,7 @@ void tr_clock_update(tr_clock_t* clock)
     {
         clock->phase += (clock->in_hz / TR_SAMPLE_RATE) * 1.0f;
         clock->phase = fmodf(clock->phase, 1.0f);
-        clock->out_gate[i] = clock->phase < 0.5f ? 5.0f : 0.0f;
+        clock->out_gate[i] = clock->phase < 0.5f ? 1.0f : -1.0f;
     }
 }
 

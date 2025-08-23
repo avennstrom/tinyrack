@@ -199,8 +199,11 @@ typedef struct app
     bool single_step;
     float fadein;
 
-    size_t timer_index;
+    size_t timer_produce_final_mix_index;
     double timer_produce_final_mix[32];
+
+    size_t timer_index;
+    double timer_frame_update_draw[32];
 } app_t;
 
 static app_t g_app = {0};
@@ -396,6 +399,8 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
 
 #define TR_KNOB_RADIUS (18)
 #define TR_KNOB_PADDING (2)
+#define TR_KNOB_TIP_WIDTH (4.0f)
+#define TR_KNOB_TIP_SIZE (0.5f) // multiplied by radius
 #define TR_PLUG_RADIUS (12)
 #define TR_PLUG_PADDING (4)
 #define TR_MODULE_PADDING (2)
@@ -475,16 +480,10 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y)
     
     const float t = (value - min) / fmaxf(max - min, 0.01f);
     const float t0 = (t - 0.5f) * 0.9f;
-    const float dot_x = sinf(t0 * TR_TWOPI);
-    const float dot_y = cosf(t0 * TR_TWOPI);
-    
-    DrawCircleV(
-        (Vector2){
-            (x + dot_x * TR_KNOB_RADIUS*0.9f),
-            (y - dot_y * TR_KNOB_RADIUS*0.9f),
-        },
-        4.0f,
-        COLOR_KNOB_TIP);
+    const float angle = t0 * TR_TWOPI;
+
+    Rectangle rect = {(float)x, (float)y, TR_KNOB_TIP_WIDTH, TR_KNOB_RADIUS * TR_KNOB_TIP_SIZE};
+    DrawRectanglePro(rect, (Vector2){TR_KNOB_TIP_WIDTH * 0.5f, TR_KNOB_RADIUS}, angle * RAD2DEG, COLOR_KNOB_TIP);
 }
 
 void tr_gui_knob_float(const tr_gui_module_t* module, const tr_module_field_info_t* field)
@@ -592,9 +591,19 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
             hmput(rack->input_plugs, value, plug);
         }
 
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+            Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
-            if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+            if (*value != NULL)
+            {
+                const tr_input_plug_kv_t* plug = hmgetp_null(rack->input_plugs, value);
+                assert(plug != NULL);
+                g_input.drag_output = *value;
+                g_input.drag_color = plug->value.color;
+                *value = NULL;
+                hmdel(rack->input_plugs, value);
+            }
+            else
             {
                 g_input.drag_input = value;
                 g_input.drag_color = tr_random_cable_color();
@@ -627,7 +636,6 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, cons
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
-
     const bool highlight = g_input.drag_input != NULL;
     
     const int rw = TR_PLUG_RADIUS + 4;
@@ -1034,12 +1042,9 @@ void tr_produce_final_mix(int16_t* output, rack_t* rack)
     timer_start(&timer);
 
     tr_produce_final_mix_internal(output, rack);
-    
-    const double ms = timer_reset(&timer);
-    //printf("final_mix: %.3f ms\n", ms);
 
-    g_app.timer_produce_final_mix[g_app.timer_index % tr_countof(g_app.timer_produce_final_mix)] = ms;
-    ++g_app.timer_index;
+    g_app.timer_produce_final_mix[g_app.timer_produce_final_mix_index % tr_countof(g_app.timer_produce_final_mix)] = timer_reset(&timer);
+    ++g_app.timer_produce_final_mix_index;
 }
 
 #ifdef TR_AUDIO_CALLBACK
@@ -1129,6 +1134,9 @@ void tr_frame_update_draw(void)
 {
     app_t* app = &g_app;
     rack_t* rack = &app->rack;
+
+    timer_t timer;
+    timer_start(&timer);
 
 #if 1
     g_input.camera.offset.x = GetScreenWidth() * 0.5f;
@@ -1288,19 +1296,35 @@ void tr_frame_update_draw(void)
 #endif
 
     {
-        double avg = 0.0;
+        double avg;
+        char message[64];
+        Vector2 message_size;
+        Vector2 pos = {0.0f, (float)GetScreenHeight()};
+        const float font_size = 18.0f;
+
+        avg = 0.0;
         for (size_t i = 0; i < tr_countof(g_app.timer_produce_final_mix); ++i)
         {
             avg += g_app.timer_produce_final_mix[i];
         }
         avg *= (1.0 / tr_countof(g_app.timer_produce_final_mix));
 
-        char message[64];
         sprintf(message, "final mix: %1.3f ms", avg);
-        const Vector2 message_size = MeasureTextEx(g_font, message, 22, 0);
+        message_size = MeasureTextEx(g_font, message, font_size, 0);
+        pos.y -= message_size.y;
+        DrawTextEx(g_font, message, pos, font_size, 0, WHITE);
+
+        avg = 0.0;
+        for (size_t i = 0; i < tr_countof(g_app.timer_frame_update_draw); ++i)
+        {
+            avg += g_app.timer_frame_update_draw[i];
+        }
+        avg *= (1.0 / tr_countof(g_app.timer_frame_update_draw));
         
-        const Vector2 pos = {0.0f, GetScreenHeight() - message_size.y};
-        DrawTextEx(g_font, message, pos, 22, 0, WHITE);
+        sprintf(message, "frame: %1.3f ms", avg);
+        message_size = MeasureTextEx(g_font, message, font_size, 0);
+        pos.y -= message_size.y;
+        DrawTextEx(g_font, message, pos, font_size, 0, WHITE);
     }
 
     {
@@ -1382,6 +1406,10 @@ void tr_frame_update_draw(void)
 #endif
     }
 #endif
+
+    g_app.timer_frame_update_draw[g_app.timer_index % tr_countof(g_app.timer_frame_update_draw)] = timer_reset(&timer);
+    ++g_app.timer_index;
+
 }
 
 static const char* TEST = "\
