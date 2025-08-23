@@ -2,7 +2,7 @@
 
 Modular synthesizer emulator.
 
-https://github.com/user-attachments/assets/78513b8e-72b6-4682-8045-a487a147272f
+https://github.com/user-attachments/assets/3409c658-f9ec-434b-8252-e1e96a088131
 
 ## Building
 
