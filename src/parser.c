@@ -1,5 +1,4 @@
 #include "parser.h"
-#include "modules.h"
 #include "modules.reflection.h"
 
 #include <stdbool.h>

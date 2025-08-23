@@ -55,7 +55,7 @@ typedef struct tr_gui_module
 {
     int x, y;
     enum tr_module_type type;
-    size_t index;
+    void* data; // pointer to the real module data (tr_vco_t, tr_clock_t, etc...) based on type
 } tr_gui_module_t;
 
 #define TR_GUI_MODULE_COUNT 1024
@@ -95,26 +95,11 @@ size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module
     return module - rack->gui_modules;
 }
 
-void* tr_get_module_address(rack_t* rack, enum tr_module_type type, size_t index)
-{
-    const tr_module_pool_t* pool = &rack->module_pool[type];
-    assert(pool->elements != NULL);
-    return tr_module_pool_get(pool, index);
-}
-
-void* get_field_address(rack_t* rack, enum tr_module_type type, size_t module_index, size_t field_index)
+void* get_field_address(enum tr_module_type type, void* module_addr, size_t field_index)
 {
     const tr_module_info_t* module_info = &tr_module_infos[type];
-    void* module_addr = tr_get_module_address(rack, type, module_index);
     const size_t field_offset = module_info->fields[field_index].offset;
     return (uint8_t*)module_addr + field_offset;
-}
-
-size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
-{
-    tr_module_pool_t* pool = &rack->module_pool[type];
-    assert(pool->elements != NULL);
-    return pool->count++;
 }
 
 tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
@@ -123,7 +108,11 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
     tr_gui_module_t* module = &rack->gui_modules[rack->gui_module_count];
     memset(module, 0, sizeof(tr_gui_module_t));
     module->type = type;
-    module->index = tr_rack_allocate_module(rack, type);
+
+    tr_module_pool_t* pool = &rack->module_pool[type];
+    assert(pool->elements != NULL);
+    const size_t module_data_index = pool->count++;
+    module->data = tr_module_pool_get(pool, module_data_index);
     
     const tr_module_info_t* module_info = &tr_module_infos[type];
     for (size_t i = 0; i < module_info->field_count; ++i)
@@ -132,7 +121,7 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
         switch (field_info->type)
         {
             case TR_MODULE_FIELD_INPUT_FLOAT:
-                memcpy(get_field_address(rack, type, module->index, i), &field_info->default_value, sizeof(field_info->default_value));
+                memcpy(get_field_address(type, module->data, i), &field_info->default_value, sizeof(field_info->default_value));
                 break;
             default: break;
         }
@@ -259,8 +248,8 @@ void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, co
 
     const tr_module_info_t* module_info = &tr_module_infos[plug->module->type];
 
-    const void* module_addr = tr_get_module_address(ctx->rack, plug->module->type, plug->module->index);
-    const uintptr_t field_offset = (uintptr_t)buffer - (uintptr_t)module_addr;
+    //const void* module_addr = tr_get_module_address(ctx->rack, plug->module->type, plug->module->index);
+    const uintptr_t field_offset = (uintptr_t)buffer - (uintptr_t)plug->module->data;
     
     const tr_module_field_info_t* field_info = NULL;
 
@@ -291,7 +280,7 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
         
         ctx.pos += sprintf(out + ctx.pos, "module %s %zu pos %d %d\n", name, i, module->x, module->y);
         
-        const void* module_addr = tr_get_module_address(rack, module->type, module->index);
+        const void* module_addr = module->data;
         
         const tr_module_info_t* module_info = &tr_module_infos[module->type];
         for (size_t field_index = 0; field_index < module_info->field_count; ++field_index)
@@ -356,7 +345,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
             if (module_info->fields[field_index].type == TR_MODULE_FIELD_BUFFER)
             {
                 const tr_output_plug_t p = {cmd->x, cmd->y, module};
-                float* field_addr = get_field_address(rack, module->type, module->index, field_index);
+                float* field_addr = get_field_address(module->type, module->data, field_index);
                 hmput(g_input.output_plugs, field_addr, p);
             }
         }
@@ -367,8 +356,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
         const tr_parser_cmd_set_value_t* cmd = &parser.values[i];
 
         const tr_gui_module_t* module = &rack->gui_modules[cmd->module_index];
-        void* module_addr = tr_get_module_address(rack, module->type, module->index);
-        void* field_addr = (uint8_t*)module_addr + cmd->field_offset;
+        void* field_addr = (uint8_t*)module->data + cmd->field_offset;
 
         switch (cmd->type)
         {
@@ -379,8 +367,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
             case TR_SET_VALUE_BUFFER:
                 printf("SET BUFFER: %zu:%zu = %zu:%zu\n", cmd->module_index, cmd->field_offset, cmd->target_module_index, cmd->target_field_offset);
                 const tr_gui_module_t* target_module = &rack->gui_modules[cmd->target_module_index];
-                void* target_module_addr = tr_get_module_address(rack, target_module->type, target_module->index);
-                void* target_field_addr = (uint8_t*)target_module_addr + cmd->target_field_offset;
+                void* target_field_addr = (uint8_t*)target_module->data + cmd->target_field_offset;
                 //*(float**)field_addr = (float*)target_field_addr;
                 memcpy(field_addr, &target_field_addr, sizeof(void*));
 
@@ -499,13 +486,13 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y)
         COLOR_KNOB_TIP);
 }
 
-void tr_gui_knob_float(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
+void tr_gui_knob_float(const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
 
-    void* module_addr = tr_get_module_address(rack, module->type, module->index);
-    float* value = (float*)((uint8_t*)module_addr + field->offset);
+    //void* module_addr = tr_get_module_address(rack, module->type, module->index);
+    float* value = (float*)((uint8_t*)module->data + field->offset);
     const float min = field->min;
     const float max = field->max;
 
@@ -533,7 +520,7 @@ void tr_gui_knob_float(rack_t* rack, const tr_gui_module_t* module, const tr_mod
     tr_gui_knob_base(*value, min, max, x, y);
 }
 
-void tr_gui_knob_int(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
+void tr_gui_knob_int(const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
@@ -544,8 +531,7 @@ void tr_gui_knob_int(rack_t* rack, const tr_gui_module_t* module, const tr_modul
     }
     else
     {
-        void* module_addr = tr_get_module_address(rack, module->type, module->index);
-        int* value = (int*)((uint8_t*)module_addr + field->offset);
+        int* value = (int*)((uint8_t*)module->data + field->offset);
         const int min = field->min_int;
         const int max = field->max_int;
         
@@ -573,7 +559,7 @@ void tr_gui_knob_int(rack_t* rack, const tr_gui_module_t* module, const tr_modul
     }
 }
 
-void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
+void tr_gui_plug_input(const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
@@ -593,8 +579,7 @@ void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const tr_mod
     // }
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
 
-    void* module_addr = tr_get_module_address(rack, module->type, module->index);
-    const float** value = (const float**)((uint8_t*)module_addr + field->offset);
+    const float** value = (const float**)((uint8_t*)module->data + field->offset);
     const Vector2 center = {(float)x, (float)y};
     
     if (!g_input.do_not_process_input)
@@ -643,7 +628,7 @@ void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const tr_mod
     }
 }
 
-void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
+void tr_gui_plug_output(const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
@@ -658,8 +643,7 @@ void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, const tr_mo
 
     if (!g_input.do_not_process_input)
     {
-        void* module_addr = tr_get_module_address(rack, module->type, module->index);
-        const float* buffer = (float*)((uint8_t*)module_addr + field->offset);
+        const float* buffer = (float*)((uint8_t*)module->data + field->offset);
 
         const Vector2 center = {(float)x, (float)y};
         const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
@@ -763,7 +747,7 @@ void tr_scope_decorate(tr_scope_t* scope, tr_gui_module_t* module)
     }
 }
 
-void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
+void tr_gui_module_draw(tr_gui_module_t* module)
 {
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     tr_gui_module_begin(module);
@@ -775,28 +759,27 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
         {
             case TR_MODULE_FIELD_FLOAT: break;
             case TR_MODULE_FIELD_INT: break;
-            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(rack, module, field_info); break;
-            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(rack, module, field_info); break;
-            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, module, field_info); break;
-            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(module, field_info); break;
+            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(module, field_info); break;
         }
     }
 
-    void* module_addr = tr_get_module_address(rack, module->type, module->index);
     switch (module->type)
     {
-        case TR_CLOCK: tr_clock_decorate(module_addr, module); break;
-        case TR_CLOCKDIV: tr_clockdiv_decorate(module_addr, module); break;
-        case TR_SEQ8: tr_seq8_decorate(module_addr, module); break;
-        case TR_QUANTIZER: tr_quantizer_decorate(module_addr, module); break;
-        case TR_SCOPE: tr_scope_decorate(module_addr, module); break;
+        case TR_CLOCK: tr_clock_decorate(module->data, module); break;
+        case TR_CLOCKDIV: tr_clockdiv_decorate(module->data, module); break;
+        case TR_SEQ8: tr_seq8_decorate(module->data, module); break;
+        case TR_QUANTIZER: tr_quantizer_decorate(module->data, module); break;
+        case TR_SCOPE: tr_scope_decorate(module->data, module); break;
         default: break;
     }
 
     tr_gui_module_end();
 }
 
-void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
+void tr_update_modules(tr_gui_module_t** modules, size_t count)
 {
 #if TR_TRACE_MODULE_UPDATES
     printf("tr_update_modules:\n");
@@ -805,21 +788,20 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
     for (size_t i = 0; i < count; ++i)
     {
         tr_gui_module_t* module = modules[i];
-        void* module_addr = tr_get_module_address(rack, module->type, module->index);
 
         switch (module->type)
         {
-            case TR_VCO: tr_vco_update(module_addr); break;
-            case TR_CLOCK: tr_clock_update(module_addr); break;
-            case TR_CLOCKDIV: tr_clockdiv_update(module_addr); break;
-            case TR_SEQ8: tr_seq8_update(module_addr); break;
-            case TR_ADSR: tr_adsr_update(module_addr); break;
-            case TR_VCA: tr_vca_update(module_addr); break;
-            case TR_LP: tr_lp_update(module_addr); break;
-            case TR_MIXER: tr_mixer_update(module_addr); break;
-            case TR_NOISE: tr_noise_update(module_addr); break;
-            case TR_QUANTIZER: tr_quantizer_update(module_addr); break;
-            case TR_RANDOM: tr_random_update(module_addr); break;
+            case TR_VCO: tr_vco_update(module->data); break;
+            case TR_CLOCK: tr_clock_update(module->data); break;
+            case TR_CLOCKDIV: tr_clockdiv_update(module->data); break;
+            case TR_SEQ8: tr_seq8_update(module->data); break;
+            case TR_ADSR: tr_adsr_update(module->data); break;
+            case TR_VCA: tr_vca_update(module->data); break;
+            case TR_LP: tr_lp_update(module->data); break;
+            case TR_MIXER: tr_mixer_update(module->data); break;
+            case TR_NOISE: tr_noise_update(module->data); break;
+            case TR_QUANTIZER: tr_quantizer_update(module->data); break;
+            case TR_RANDOM: tr_random_update(module->data); break;
             default: break;
         }
 
@@ -829,19 +811,18 @@ void tr_update_modules(rack_t* rack, tr_gui_module_t** modules, size_t count)
     }
 }
 
-void tr_enumerate_inputs(const float* inputs[], int* count, rack_t* rack, const tr_gui_module_t* module)
+void tr_enumerate_inputs(const float* inputs[], int* count, const tr_gui_module_t* module)
 {
     *count = 0;
 
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
-    const void* module_addr = tr_get_module_address(rack, module->type, module->index);
 
     for (size_t i = 0; i < module_info->field_count; ++i)
     {
         const tr_module_field_info_t* field = &module_info->fields[i];
         if (field->type == TR_MODULE_FIELD_INPUT_BUFFER)
         {
-            inputs[(*count)++] = *(float**)((uint8_t*)module_addr + field->offset);
+            inputs[(*count)++] = *(float**)((uint8_t*)module->data + field->offset);
         }
     }
 }
@@ -866,7 +847,7 @@ size_t tr_collect_leaf_modules(rack_t* rack, const tr_gui_module_t* leaf_modules
     {
         const float* inputs[64];
         int input_count;
-        tr_enumerate_inputs(inputs, &input_count, rack, &rack->gui_modules[i]);
+        tr_enumerate_inputs(inputs, &input_count, &rack->gui_modules[i]);
 
         for (int input_index = 0; input_index < input_count; ++input_index)
         {
@@ -967,7 +948,7 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
 
             const float* inputs[64];
             int input_count;
-            tr_enumerate_inputs(inputs, &input_count, rack, top.module);
+            tr_enumerate_inputs(inputs, &input_count, top.module);
 
             for (int i = 0; i < input_count; ++i)
             {
@@ -1011,9 +992,10 @@ static void float_to_int16_pcm(int16_t* samples, const float* buffer)
     }
 }
 
-static tr_speaker_t* tr_find_speaker(rack_t* rack)
+static const tr_speaker_t* tr_find_speaker(rack_t* rack)
 {
-    const tr_gui_module_t* speaker = NULL;
+    const tr_speaker_t* speaker = NULL;
+    
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
         const tr_gui_module_t* module = &rack->gui_modules[i];
@@ -1022,30 +1004,24 @@ static tr_speaker_t* tr_find_speaker(rack_t* rack)
             continue;
         }
         
-        const tr_speaker_t* m = tr_module_pool_get(&rack->module_pool[TR_SPEAKER], module->index);
-        if (m->in_audio == NULL)
+        const tr_speaker_t* s = (const tr_speaker_t*)module->data;
+        if (s->in_audio == NULL)
         {
             continue;
         }
 
-        speaker = module;
+        speaker = s;
         break;
     }
 
-    if (speaker == NULL)
-    {
-        return NULL;
-    }
-
-    assert(speaker->type == TR_SPEAKER);
-    return tr_module_pool_get(&rack->module_pool[TR_SPEAKER], speaker->index);
+    return speaker;
 }
 
 static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
 {
     tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
     const size_t update_count = tr_resolve_module_graph(update_modules, rack);
-    tr_update_modules(rack, update_modules, update_count);
+    tr_update_modules(update_modules, update_count);
 
     const tr_speaker_t* speaker = tr_find_speaker(rack);
     if (speaker == NULL)
@@ -1223,7 +1199,7 @@ void tr_frame_update_draw(void)
     g_input.do_not_process_input = app->picker_mode;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
-        tr_gui_module_draw(rack, &rack->gui_modules[i]);
+        tr_gui_module_draw(&rack->gui_modules[i]);
     }
     g_input.do_not_process_input = false;
 
@@ -1258,17 +1234,17 @@ void tr_frame_update_draw(void)
         int x = 10;
         int y = 10;
 
-        for (size_t i = 0; i < TR_MODULE_COUNT; ++i)
+        for (size_t module_type = 0; module_type < TR_MODULE_COUNT; ++module_type)
         {
-            const tr_module_info_t* module_info = &tr_module_infos[i];
+            const tr_module_info_t* module_info = &tr_module_infos[module_type];
             if (x + module_info->width >= GetScreenWidth())
             {
                 x = 10;
                 y += 180;
             }
 
-            tr_gui_module_t m = {x, y, i, .index = TR_MODULE_POOL_SIZE - 1};
-            tr_gui_module_draw(rack, &m);
+            tr_gui_module_t m = {x, y, module_type, tr_module_pool_get(&rack->module_pool[module_type], TR_MODULE_POOL_SIZE - 1)};
+            tr_gui_module_draw(&m);
 
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && 
                 g_input.drag_module == NULL)
@@ -1279,7 +1255,7 @@ void tr_frame_update_draw(void)
                     mouse.x < x + module_info->width && 
                     mouse.y < y + module_info->height)
                 {
-                    tr_gui_module_t* module = tr_rack_create_module(rack, i);
+                    tr_gui_module_t* module = tr_rack_create_module(rack, module_type);
                     module->x = (int)mouse.x;
                     module->y = (int)mouse.y;
                     g_input.drag_module = module;
