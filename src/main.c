@@ -88,6 +88,8 @@ typedef struct rack
     tr_module_pool_t module_pool[TR_MODULE_COUNT];
     tr_gui_module_t gui_modules[TR_GUI_MODULE_COUNT];
     size_t gui_module_count;
+    tr_output_plug_kv_t* output_plugs;
+    tr_input_plug_kv_t* input_plugs;
 } rack_t;
 
 size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module)
@@ -133,6 +135,9 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
 
 void rack_init(rack_t* rack)
 {
+    hmfree(rack->input_plugs);
+    hmfree(rack->output_plugs);
+
     for (int i = 0; i < TR_MODULE_COUNT; ++i)
     {
         free(rack->module_pool[i].elements);
@@ -163,8 +168,6 @@ typedef struct tr_gui_input
     const float** drag_input;
     const float* drag_output;
     Color drag_color;
-    tr_output_plug_kv_t* output_plugs;
-    tr_input_plug_kv_t* input_plugs;
     bool do_not_process_input;
 
     tr_cable_draw_command_t cable_draws[1024];
@@ -240,7 +243,7 @@ void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, co
         return;
     }
 
-    const tr_output_plug_kv_t* plug_kv = hmgetp_null(g_input.output_plugs, buffer);
+    const tr_output_plug_kv_t* plug_kv = hmgetp_null(ctx->rack->output_plugs, buffer);
     assert(plug_kv != NULL);
     const tr_output_plug_t* plug = &plug_kv->value;
 
@@ -323,8 +326,6 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
 void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
 {
     rack_init(rack);
-    hmfree(g_input.input_plugs);
-    hmfree(g_input.output_plugs);
     
     tr_parser_t parser;
     tr_parse_memory(&parser, input, len);
@@ -346,7 +347,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
             {
                 const tr_output_plug_t p = {cmd->x, cmd->y, module};
                 float* field_addr = get_field_address(module->type, module->data, field_index);
-                hmput(g_input.output_plugs, field_addr, p);
+                hmput(rack->output_plugs, field_addr, p);
             }
         }
     }
@@ -372,7 +373,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
                 memcpy(field_addr, &target_field_addr, sizeof(void*));
 
                 const tr_input_plug_t plug = {tr_random_cable_color()};
-                hmput(g_input.input_plugs, field_addr, plug);
+                hmput(rack->input_plugs, field_addr, plug);
                 break;
         }
     }
@@ -559,7 +560,7 @@ void tr_gui_knob_int(const tr_gui_module_t* module, const tr_module_field_info_t
     }
 }
 
-void tr_gui_plug_input(const tr_gui_module_t* module, const tr_module_field_info_t* field)
+static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
@@ -594,7 +595,7 @@ void tr_gui_plug_input(const tr_gui_module_t* module, const tr_module_field_info
             g_input.drag_output = NULL;
 
             const tr_input_plug_t plug = {g_input.drag_color};
-            hmput(g_input.input_plugs, value, plug);
+            hmput(rack->input_plugs, value, plug);
         }
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
@@ -618,8 +619,8 @@ void tr_gui_plug_input(const tr_gui_module_t* module, const tr_module_field_info
 
     if (*value != NULL)
     {
-        const tr_output_plug_t plug = hmget(g_input.output_plugs, *value);
-        const tr_input_plug_t input_plug = hmget(g_input.input_plugs, value);
+        const tr_output_plug_t plug = hmget(rack->output_plugs, *value);
+        const tr_input_plug_t input_plug = hmget(rack->input_plugs, value);
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
             .to = {(float)plug.x, (float)plug.y},
@@ -628,7 +629,7 @@ void tr_gui_plug_input(const tr_gui_module_t* module, const tr_module_field_info
     }
 }
 
-void tr_gui_plug_output(const tr_gui_module_t* module, const tr_module_field_info_t* field)
+static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
@@ -653,7 +654,7 @@ void tr_gui_plug_output(const tr_gui_module_t* module, const tr_module_field_inf
             Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
         {
             const tr_input_plug_t plug = {g_input.drag_color};
-            hmput(g_input.input_plugs, g_input.drag_input, plug);
+            hmput(rack->input_plugs, g_input.drag_input, plug);
 
             *g_input.drag_input = buffer;
             g_input.drag_input = NULL;
@@ -678,7 +679,7 @@ void tr_gui_plug_output(const tr_gui_module_t* module, const tr_module_field_inf
         }
 
         const tr_output_plug_t plug = {x, y, module};
-        hmput(g_input.output_plugs, buffer, plug);
+        hmput(rack->output_plugs, buffer, plug);
     }
 }
 
@@ -747,7 +748,7 @@ void tr_scope_decorate(tr_scope_t* scope, tr_gui_module_t* module)
     }
 }
 
-void tr_gui_module_draw(tr_gui_module_t* module)
+void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
 {
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     tr_gui_module_begin(module);
@@ -761,8 +762,8 @@ void tr_gui_module_draw(tr_gui_module_t* module)
             case TR_MODULE_FIELD_INT: break;
             case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(module, field_info); break;
             case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(module, field_info); break;
-            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(module, field_info); break;
-            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, module, field_info); break;
+            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, module, field_info); break;
         }
     }
 
@@ -857,7 +858,7 @@ size_t tr_collect_leaf_modules(rack_t* rack, const tr_gui_module_t* leaf_modules
                 continue;
             }
 
-            const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[input_index]);
+            const tr_output_plug_t plug = hmget(rack->output_plugs, inputs[input_index]);
             const size_t module_index = tr_get_gui_module_index(rack, plug.module);
             output_mask[module_index / 32] |= 1 << (module_index % 32);
         }
@@ -957,7 +958,7 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
                     continue;
                 }
 
-                const tr_output_plug_t plug = hmget(g_input.output_plugs, inputs[i]);
+                const tr_output_plug_t plug = hmget(rack->output_plugs, inputs[i]);
 
                 assert(sp < tr_countof(stack));
                 stack[sp++] = (stack_item_t){plug.module, top.module};
@@ -1199,7 +1200,7 @@ void tr_frame_update_draw(void)
     g_input.do_not_process_input = app->picker_mode;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
-        tr_gui_module_draw(&rack->gui_modules[i]);
+        tr_gui_module_draw(rack, &rack->gui_modules[i]);
     }
     g_input.do_not_process_input = false;
 
@@ -1242,7 +1243,7 @@ void tr_frame_update_draw(void)
             }
 
             tr_gui_module_t m = {x, y, module_type, tr_module_pool_get(&rack->module_pool[module_type], TR_MODULE_POOL_SIZE - 1)};
-            tr_gui_module_draw(&m);
+            tr_gui_module_draw(rack, &m);
 
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && 
                 g_input.drag_module == NULL)
