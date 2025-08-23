@@ -811,9 +811,9 @@ void tr_update_modules(tr_gui_module_t** modules, size_t count)
     }
 }
 
-void tr_enumerate_inputs(const float* inputs[], int* count, const tr_gui_module_t* module)
+int tr_enumerate_inputs(const float* inputs[], const tr_gui_module_t* module)
 {
-    *count = 0;
+    int count = 0;
 
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
 
@@ -822,9 +822,11 @@ void tr_enumerate_inputs(const float* inputs[], int* count, const tr_gui_module_
         const tr_module_field_info_t* field = &module_info->fields[i];
         if (field->type == TR_MODULE_FIELD_INPUT_BUFFER)
         {
-            inputs[(*count)++] = *(float**)((uint8_t*)module->data + field->offset);
+            inputs[count++] = *(float**)((uint8_t*)module->data + field->offset);
         }
     }
+
+    return count;
 }
 
 typedef struct tr_module_sort_data
@@ -846,8 +848,7 @@ size_t tr_collect_leaf_modules(rack_t* rack, const tr_gui_module_t* leaf_modules
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
         const float* inputs[64];
-        int input_count;
-        tr_enumerate_inputs(inputs, &input_count, &rack->gui_modules[i]);
+        const int input_count = tr_enumerate_inputs(inputs, &rack->gui_modules[i]);
 
         for (int input_index = 0; input_index < input_count; ++input_index)
         {
@@ -947,8 +948,7 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
             visited_mask[module_index / 32] |= (1 << (module_index % 32));
 
             const float* inputs[64];
-            int input_count;
-            tr_enumerate_inputs(inputs, &input_count, top.module);
+            const int input_count = tr_enumerate_inputs(inputs, top.module);
 
             for (int i = 0; i < input_count; ++i)
             {
@@ -1084,7 +1084,7 @@ void tr_audio_callback(void *bufferData, unsigned int frames)
 }
 #endif
 
-Rectangle ComputePatchBounds(rack_t* rack)
+Rectangle tr_compute_patch_bounds(rack_t* rack)
 {
     if (rack->gui_module_count == 0)
     {
@@ -1118,7 +1118,7 @@ Rectangle ComputePatchBounds(rack_t* rack)
     };
 }
 
-void DrawHangingCableQuadratic(Vector2 a, Vector2 b, float slack, float thick, Color color)
+void tr_draw_cable(Vector2 a, Vector2 b, float slack, float thick, Color color)
 {
     float L = Vector2Distance(a, b);
     float sag = L * slack * 0.25f;
@@ -1206,9 +1206,7 @@ void tr_frame_update_draw(void)
     for (size_t i = 0; i < g_input.cable_draw_count; ++i)
     {
         const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
-        //DrawLineEx(draw->from, draw->to, 6.0f, draw->color);
-        //DrawLineBezier(draw->from, draw->to, 6.0f, draw->color);
-        DrawHangingCableQuadratic(draw->from, draw->to, 1.0f, 6.0f, draw->color);
+        tr_draw_cable(draw->from, draw->to, 1.0f, 6.0f, draw->color);
     }
 
     EndMode2D();
@@ -1535,7 +1533,7 @@ int main()
     }
 #else
     tr_rack_deserialize(rack, TEST, strlen(TEST));
-    const Rectangle bounds = ComputePatchBounds(rack);
+    const Rectangle bounds = tr_compute_patch_bounds(rack);
     g_input.camera.target.x = bounds.x + bounds.width * 0.5f;
     g_input.camera.target.y = bounds.y + bounds.height * 0.5f;
 #endif
