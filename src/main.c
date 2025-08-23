@@ -1364,12 +1364,8 @@ static void float_to_int16_pcm(int16_t* samples, const float* buffer)
     }
 }
 
-static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
+tr_speaker_t* tr_find_speaker(rack_t* rack)
 {
-    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
-    const size_t update_count = tr_resolve_module_graph(update_modules, rack);
-    tr_update_modules(rack, update_modules, update_count);
-
     const tr_gui_module_t* speaker = NULL;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
@@ -1391,13 +1387,27 @@ static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
 
     if (speaker == NULL)
     {
+        return NULL;
+    }
+
+    assert(speaker->type == TR_SPEAKER);
+    return tr_module_pool_get(&rack->module_pool[TR_SPEAKER], speaker->index);
+}
+
+static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
+{
+    tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
+    const size_t update_count = tr_resolve_module_graph(update_modules, rack);
+    tr_update_modules(rack, update_modules, update_count);
+
+    const tr_speaker_t* speaker = tr_find_speaker(rack);
+    if (speaker == NULL)
+    {
         memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
         return;
     }
 
-    assert(speaker->type == TR_SPEAKER);
-    const tr_speaker_t* m = tr_module_pool_get(&rack->module_pool[TR_SPEAKER], speaker->index);
-    float_to_int16_pcm(output, m->in_audio);
+    float_to_int16_pcm(output, speaker->in_audio);
 }
 
 void tr_produce_final_mix(int16_t* output, rack_t* rack)
