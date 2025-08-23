@@ -210,7 +210,7 @@ static const Color g_cable_colors[] =
     { 255, 153, 148 },
     { 148, 148, 255 },
     { 148, 255, 188 },
-    { 170, 166, 151 },
+    { 239, 145, 21 },
 };
 
 static Color tr_random_cable_color()
@@ -564,24 +564,18 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
-
+    const Vector2 center = {(float)x, (float)y};
+    const float** value = (const float**)((uint8_t*)module->data + field->offset);
     const bool highlight = g_input.drag_output != NULL;
 
     DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
-
+    
     Color inner_color = COLOR_PLUG_HOLE;
     if (highlight)
     {
         inner_color = COLOR_PLUG_HIGHLIGHT;
     }
-    // if (*value != NULL)
-    // {
-    //     inner_color = hmget(g_input.input_plugs, value).color;
-    // }
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
-
-    const float** value = (const float**)((uint8_t*)module->data + field->offset);
-    const Vector2 center = {(float)x, (float)y};
     
     if (!g_input.do_not_process_input)
     {
@@ -612,7 +606,7 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
             g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
                 .from = center,
                 .to = mouse,
-                .color = ColorAlpha(g_input.drag_color, TR_CABLE_ALPHA),
+                .color = g_input.drag_color,
             };
         }
     }
@@ -624,7 +618,7 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
             .to = {(float)plug.x, (float)plug.y},
-            .color = ColorAlpha(input_plug.color, TR_CABLE_ALPHA),
+            .color = input_plug.color,
         };
     }
 }
@@ -674,7 +668,7 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, cons
             g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
                 .from = center,
                 .to = mouse,
-                .color = ColorAlpha(g_input.drag_color, TR_CABLE_ALPHA),
+                .color = g_input.drag_color,
             };
         }
 
@@ -1207,7 +1201,10 @@ void tr_frame_update_draw(void)
     for (size_t i = 0; i < g_input.cable_draw_count; ++i)
     {
         const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
-        tr_draw_cable(draw->from, draw->to, 1.0f, 6.0f, draw->color);
+        tr_draw_cable(draw->from, draw->to, 1.0f, 6.0f, ColorAlpha(draw->color, TR_CABLE_ALPHA));
+        
+        DrawCircleV(draw->from, TR_PLUG_RADIUS - TR_PLUG_PADDING - 3.5f, ColorAlpha(draw->color, 1.0f));
+        DrawCircleV(draw->to, TR_PLUG_RADIUS - TR_PLUG_PADDING - 3.5f, ColorAlpha(draw->color, 1.0f));
     }
 
     EndMode2D();
