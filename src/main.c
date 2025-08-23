@@ -1529,7 +1529,7 @@ int main()
 #if 0
     rack_init(rack);
     {
-        tr_gui_module_t* speaker0 = tr_rack_create_module(app->rack, TR_SPEAKER);
+        tr_gui_module_t* speaker0 = tr_rack_create_module(rack, TR_SPEAKER);
         speaker0->x = 1280 / 2;
         speaker0->y = 720 / 2;
     }
