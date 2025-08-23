@@ -39,26 +39,17 @@
 
 #define TR_MODULE_POOL_SIZE 1024
 
-#define RACK_MODULE_POOL(Type) \
-    typedef struct Type##_pool \
-    { \
-        size_t count; \
-        Type##_t elements[TR_MODULE_POOL_SIZE]; \
-    } Type##_pool_t;
+typedef struct tr_module_pool
+{
+    size_t count;
+    size_t element_size;
+    void* elements;
+} tr_module_pool_t;
 
-RACK_MODULE_POOL(tr_vco);
-RACK_MODULE_POOL(tr_clock);
-RACK_MODULE_POOL(tr_clockdiv);
-RACK_MODULE_POOL(tr_seq8);
-RACK_MODULE_POOL(tr_adsr);
-RACK_MODULE_POOL(tr_vca);
-RACK_MODULE_POOL(tr_lp);
-RACK_MODULE_POOL(tr_mixer);
-RACK_MODULE_POOL(tr_noise);
-RACK_MODULE_POOL(tr_quantizer);
-RACK_MODULE_POOL(tr_random);
-RACK_MODULE_POOL(tr_speaker);
-RACK_MODULE_POOL(tr_scope);
+static void* tr_module_pool_get(const tr_module_pool_t* pool, size_t index)
+{
+    return (uint8_t*)pool->elements + (pool->element_size * index);
+}
 
 typedef struct tr_gui_module
 {
@@ -94,20 +85,7 @@ typedef struct tr_input_plug_kv
 
 typedef struct rack
 {
-    tr_vco_pool_t vco;
-    tr_clock_pool_t clock;
-    tr_clockdiv_pool_t clockdiv;
-    tr_seq8_pool_t seq8;
-    tr_adsr_pool_t adsr;
-    tr_vca_pool_t vca;
-    tr_lp_pool_t lp;
-    tr_mixer_pool_t mixer;
-    tr_noise_pool_t noise;
-    tr_quantizer_pool_t quantizer;
-    tr_random_pool_t random;
-    tr_speaker_pool_t speaker;
-    tr_scope_pool_t scope;
-    
+    tr_module_pool_t module_pool[TR_MODULE_COUNT];
     tr_gui_module_t gui_modules[TR_GUI_MODULE_COUNT];
     size_t gui_module_count;
 } rack_t;
@@ -119,30 +97,9 @@ size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module
 
 void* tr_get_module_address(rack_t* rack, enum tr_module_type type, size_t index)
 {
-    void* pool_base_addr = NULL;
-
-    const tr_module_info_t* module_info = &tr_module_infos[type];
-
-    switch (type)
-    {
-        case TR_VCO: pool_base_addr = rack->vco.elements; break;
-        case TR_CLOCK: pool_base_addr = rack->clock.elements; break;
-        case TR_CLOCKDIV: pool_base_addr = rack->clockdiv.elements; break;
-        case TR_SEQ8: pool_base_addr = rack->seq8.elements; break;
-        case TR_ADSR: pool_base_addr = rack->adsr.elements; break;
-        case TR_VCA: pool_base_addr = rack->vca.elements; break;
-        case TR_LP: pool_base_addr = rack->lp.elements; break;
-        case TR_MIXER: pool_base_addr = rack->mixer.elements; break;
-        case TR_NOISE: pool_base_addr = rack->noise.elements; break;
-        case TR_QUANTIZER: pool_base_addr = rack->quantizer.elements; break;
-        case TR_RANDOM: pool_base_addr = rack->random.elements; break;
-        case TR_SPEAKER: pool_base_addr = rack->speaker.elements; break;
-        case TR_SCOPE: pool_base_addr = rack->scope.elements; break;
-        default: assert(0);
-    }
-    
-    void* module_addr = (uint8_t*)pool_base_addr + (index * module_info->struct_size);
-    return module_addr;
+    const tr_module_pool_t* pool = &rack->module_pool[type];
+    assert(pool->elements != NULL);
+    return tr_module_pool_get(pool, index);
 }
 
 void* get_field_address(rack_t* rack, enum tr_module_type type, size_t module_index, size_t field_index)
@@ -155,25 +112,9 @@ void* get_field_address(rack_t* rack, enum tr_module_type type, size_t module_in
 
 size_t tr_rack_allocate_module(rack_t* rack, enum tr_module_type type)
 {
-    switch (type)
-    {
-        case TR_VCO: return rack->vco.count++;
-        case TR_CLOCK: return rack->clock.count++;
-        case TR_CLOCKDIV: return rack->clockdiv.count++;
-        case TR_SEQ8: return rack->seq8.count++;
-        case TR_ADSR: return rack->adsr.count++;
-        case TR_VCA: return rack->vca.count++;
-        case TR_LP: return rack->lp.count++;
-        case TR_MIXER: return rack->mixer.count++;
-        case TR_NOISE: return rack->noise.count++;
-        case TR_QUANTIZER: return rack->quantizer.count++;
-        case TR_RANDOM: return rack->random.count++;
-        case TR_SPEAKER: return rack->speaker.count++;
-        case TR_SCOPE: return rack->scope.count++;
-        case TR_MODULE_COUNT: break;
-    }
-    assert(0);
-    return (size_t)-1;
+    tr_module_pool_t* pool = &rack->module_pool[type];
+    assert(pool->elements != NULL);
+    return pool->count++;
 }
 
 tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
@@ -203,7 +144,18 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
 
 void rack_init(rack_t* rack)
 {
+    for (int i = 0; i < TR_MODULE_COUNT; ++i)
+    {
+        free(rack->module_pool[i].elements);
+    }
+
     memset(rack, 0, sizeof(rack_t));
+
+    for (int i = 0; i < TR_MODULE_COUNT; ++i)
+    {
+        rack->module_pool[i].element_size = tr_module_infos[i].struct_size;
+        rack->module_pool[i].elements = calloc(TR_MODULE_POOL_SIZE, tr_module_infos[i].struct_size);
+    }
 }
 
 typedef struct tr_cable_draw_command
@@ -238,7 +190,7 @@ static tr_gui_input_t g_input = {
 
 typedef struct app
 {
-    rack_t* rack;
+    rack_t rack;
     AudioStream stream;
 #ifdef TR_RECORDING_FEATURE
     bool is_recording;
@@ -369,6 +321,9 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
                     tr_serialize_input_buffer(&ctx, field_info->name, value);
                     break;
                 }
+
+                case TR_MODULE_FIELD_BUFFER:
+                    break;
             }
         }
     }
@@ -730,7 +685,7 @@ void tr_parse(tr_parser_t* p, tr_tokenizer_t* t)
 
 void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
 {
-    memset(rack, 0, sizeof(rack_t));
+    rack_init(rack);
     hmfree(g_input.input_plugs);
     hmfree(g_input.output_plugs);
     
@@ -1415,16 +1370,23 @@ static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
     const size_t update_count = tr_resolve_module_graph(update_modules, rack);
     tr_update_modules(rack, update_modules, update_count);
 
-    tr_gui_module_t* speaker = NULL;
+    const tr_gui_module_t* speaker = NULL;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
-        tr_gui_module_t* module = &rack->gui_modules[i];
-        if (module->type == TR_SPEAKER &&
-            rack->speaker.elements[module->index].in_audio != NULL)
+        const tr_gui_module_t* module = &rack->gui_modules[i];
+        if (module->type != TR_SPEAKER)
         {
-            speaker = module;
-            break;
+            continue;
         }
+        
+        const tr_speaker_t* m = tr_module_pool_get(&rack->module_pool[TR_SPEAKER], module->index);
+        if (m->in_audio == NULL)
+        {
+            continue;
+        }
+
+        speaker = module;
+        break;
     }
 
     if (speaker == NULL)
@@ -1434,7 +1396,8 @@ static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
     }
 
     assert(speaker->type == TR_SPEAKER);
-    float_to_int16_pcm(output, rack->speaker.elements[speaker->index].in_audio);
+    const tr_speaker_t* m = tr_module_pool_get(&rack->module_pool[TR_SPEAKER], speaker->index);
+    float_to_int16_pcm(output, m->in_audio);
 }
 
 void tr_produce_final_mix(int16_t* output, rack_t* rack)
@@ -1464,7 +1427,7 @@ void tr_audio_callback(void *bufferData, unsigned int frames)
         if (g_app.final_mix_remaining == 0)
         {
             g_app.final_mix_remaining = TR_SAMPLE_COUNT;
-            tr_produce_final_mix(g_app.final_mix, g_app.rack);
+            tr_produce_final_mix(g_app.final_mix, &g_app.rack);
         }
 
         const size_t final_mix_cursor = TR_SAMPLE_COUNT - g_app.final_mix_remaining;
@@ -1537,7 +1500,7 @@ void DrawHangingCableQuadratic(Vector2 a, Vector2 b, float slack, float thick, C
 void tr_frame_update_draw(void)
 {
     app_t* app = &g_app;
-    rack_t* rack = app->rack;
+    rack_t* rack = &app->rack;
 
 #if 1
     g_input.camera.offset.x = GetScreenWidth() * 0.5f;
@@ -1796,27 +1759,27 @@ static const char* TEST = "\
 module speaker 0 pos 1357 -44 \
 input_buffer in_audio > mixer 2 out_mix \
 module vco 1 pos 661 1 \
-input phase 3.744261 \
+input phase 6.057979 \
 input in_v0 118.000000 \
 input_buffer in_voct > quantizer 8 out_cv \
 module mixer 2 pos 1082 -49 \
 input_buffer in_0 > lp 13 out_audio \
 input_buffer in_1 > lp 11 out_audio \
 input_buffer in_2 > lp 20 out_audio \
-input in_vol0 0.550000 \
-input in_vol1 0.510000 \
-input in_vol2 0.150000 \
+input in_vol0 0.740000 \
+input in_vol1 0.810000 \
+input in_vol2 0.140000 \
 input in_vol3 0.000000 \
 input in_vol_final 1.000000 \
 module vco 3 pos 660 -173 \
-input phase 3.472554 \
+input phase 0.629575 \
 input in_v0 235.600113 \
 input_buffer in_voct > quantizer 7 out_cv \
 module clock 4 pos -143 -20 \
-input phase 0.264963 \
+input phase 0.202133 \
 input in_hz 6.508700 \
 module seq8 5 pos 10 -115 \
-input step 1 \
+input step 5 \
 input trig 1 \
 input_buffer in_step > clock 4 out_gate \
 input in_cv_0 0.280000 \
@@ -1828,10 +1791,10 @@ input in_cv_5 0.000000 \
 input in_cv_6 0.610000 \
 input in_cv_7 0.000000 \
 module seq8 6 pos 9 -8 \
-input step 7 \
-input trig 0 \
+input step 0 \
+input trig 1 \
 input_buffer in_step > clockdiv 17 out_1 \
-input in_cv_0 0.000000 \
+input in_cv_0 0.070000 \
 input in_cv_1 0.280000 \
 input in_cv_2 0.470000 \
 input in_cv_3 0.620000 \
@@ -1840,13 +1803,13 @@ input in_cv_5 0.270000 \
 input in_cv_6 0.470000 \
 input in_cv_7 0.690000 \
 module quantizer 7 pos 437 -138 \
-input in_mode 1 \
+input in_mode 3 \
 input_buffer in_cv > seq8 5 out_cv \
 module quantizer 8 pos 439 -15 \
-input in_mode 1 \
+input in_mode 3 \
 input_buffer in_cv > seq8 6 out_cv \
 module adsr 9 pos 796 252 \
-input value 0.962402 \
+input value 0.988310 \
 input gate 1 \
 input state 1 \
 input in_attack 0.310690 \
@@ -1864,7 +1827,7 @@ input in_sustain 0.000000 \
 input in_release 0.000000 \
 module lp 11 pos 779 9 \
 input value 0.000000 \
-input z -0.121169 \
+input z 0.538930 \
 input_buffer in_audio > vco 1 out_saw \
 input_buffer in_cut > adsr 9 out_env \
 input in_cut0 0.000000 \
@@ -1872,7 +1835,7 @@ input in_cut_mul 0.460000 \
 module vca 12 pos 1655 452 \
 module lp 13 pos 779 -111 \
 input value 0.000000 \
-input z -0.142731 \
+input z 0.094695 \
 input_buffer in_audio > vco 3 out_saw \
 input_buffer in_cut > adsr 9 out_env \
 input in_cut0 0.000000 \
@@ -1885,61 +1848,61 @@ module scope 16 pos 1099 -288 \
 input_buffer in_0 > lp 13 out_audio \
 module clockdiv 17 pos 10 -223 \
 input gate 0.000000 \
-input state 89 \
+input state 70 \
 input_buffer in_gate > clock 4 out_gate \
 module adsr 18 pos 789 373 \
-input value 0.011510 \
-input gate 0 \
-input state 3 \
+input value 0.567364 \
+input gate 1 \
+input state 0 \
 input in_attack 0.770230 \
 input in_decay 0.001000 \
 input in_sustain 1.000000 \
 input in_release 0.520480 \
 input_buffer in_gate > clockdiv 17 out_2 \
 module vco 19 pos 659 184 \
-input phase 2.379306 \
+input phase 5.398239 \
 input in_v0 118.000015 \
 input_buffer in_voct > quantizer 22 out_cv \
 module lp 20 pos 777 126 \
 input value 0.000000 \
-input z -0.029903 \
-input_buffer in_audio > vco 19 out_sqr \
+input z 0.603262 \
+input_buffer in_audio > vco 19 out_saw \
 input_buffer in_cut > adsr 18 out_env \
 input in_cut0 0.140000 \
-input in_cut_mul 0.520000 \
+input in_cut_mul 0.780000 \
 module seq8 21 pos 9 104 \
-input step 2 \
-input trig 0 \
+input step 0 \
+input trig 1 \
 input_buffer in_step > clockdiv 17 out_2 \
 input in_cv_0 0.000000 \
-input in_cv_1 0.270000 \
+input in_cv_1 0.480000 \
 input in_cv_2 0.000000 \
-input in_cv_3 0.300000 \
+input in_cv_3 1.000000 \
 input in_cv_4 0.000000 \
-input in_cv_5 0.270000 \
-input in_cv_6 0.000000 \
-input in_cv_7 0.260000 \
+input in_cv_5 0.480000 \
+input in_cv_6 0.680000 \
+input in_cv_7 1.000000 \
 module quantizer 22 pos 436 109 \
-input in_mode 1 \
+input in_mode 3 \
 input_buffer in_cv > seq8 21 out_cv";
 
 int main()
 {
     app_t* app = &g_app;
-
-    app->rack = calloc(1, sizeof(rack_t));
+    rack_t* rack = &app->rack;
 
     srand((unsigned int)time(NULL));
 
 #if 0
+    rack_init(rack);
     {
         tr_gui_module_t* speaker0 = tr_rack_create_module(app->rack, TR_SPEAKER);
         speaker0->x = 1280 / 2;
         speaker0->y = 720 / 2;
     }
 #else
-    tr_rack_deserialize(app->rack, TEST, strlen(TEST));
-    const Rectangle bounds = ComputePatchBounds(app->rack);
+    tr_rack_deserialize(rack, TEST, strlen(TEST));
+    const Rectangle bounds = ComputePatchBounds(rack);
     g_input.camera.target.x = bounds.x + bounds.width * 0.5f;
     g_input.camera.target.y = bounds.y + bounds.height * 0.5f;
 #endif
