@@ -28,14 +28,30 @@
 
 #include "font.h"
 
-// config
+// debug stuff
 #define TR_TRACE_MODULE_UPDATES 0
 #define TR_TRACE_MODULE_GRAPH 0
 
+#define TR_KNOB_RADIUS (18)
+#define TR_KNOB_PADDING (2)
+#define TR_KNOB_TIP_WIDTH (4.0f)
+#define TR_KNOB_TIP_SIZE (0.5f) // multiplied by radius
+#define TR_PLUG_RADIUS (12)
+#define TR_PLUG_PADDING (4)
+#define TR_PLUG_SNAP_RADIUS (TR_PLUG_RADIUS + 8)
+#define TR_MODULE_PADDING (2)
 
-//
-// GUI
-//
+#define COLOR_BACKGROUND GetColor(0x3c5377ff)
+#define COLOR_MODULE_BACKGROUND GetColor(0xfff3c2ff)
+#define COLOR_MODULE_TEXT GetColor(0x3c5377ff)
+#define COLOR_PLUG_HOLE GetColor(0x303030ff)
+#define COLOR_PLUG_BORDER GetColor(0xa5a5a5ff)
+#define COLOR_PLUG_HIGHLIGHT (Color){228, 168, 27, 255}
+#define COLOR_PLUG_OUTPUT GetColor(0xddc55eff)
+#define COLOR_KNOB GetColor(0xddc55eff)
+#define COLOR_KNOB_TIP GetColor(0xffffffff)
+
+#define TR_CABLE_ALPHA 0.75f
 
 #define TR_MODULE_POOL_SIZE 1024
 
@@ -97,11 +113,11 @@ size_t tr_get_gui_module_index(const rack_t* rack, const tr_gui_module_t* module
     return module - rack->gui_modules;
 }
 
-void* get_field_address(enum tr_module_type type, void* module_addr, size_t field_index)
+void* get_field_address(const tr_gui_module_t* module, size_t field_index)
 {
-    const tr_module_info_t* module_info = &tr_module_infos[type];
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
     const size_t field_offset = module_info->fields[field_index].offset;
-    return (uint8_t*)module_addr + field_offset;
+    return (uint8_t*)module->data + field_offset;
 }
 
 tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
@@ -123,7 +139,7 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
         switch (field_info->type)
         {
             case TR_MODULE_FIELD_INPUT_FLOAT:
-                memcpy(get_field_address(type, module->data, i), &field_info->default_value, sizeof(field_info->default_value));
+                memcpy(get_field_address(module, i), &field_info->default_value, sizeof(field_info->default_value));
                 break;
             default: break;
         }
@@ -159,6 +175,20 @@ typedef struct tr_cable_draw_command
     Color color;
 } tr_cable_draw_command_t;
 
+typedef enum tr_input_type
+{
+    TR_INPUT_TYPE_KNOB,
+    TR_INPUT_TYPE_INPUT_PLUG,
+    TR_INPUT_TYPE_OUTPUT_PLUG,
+    TR_INPUT_TYPE_COUNT,
+} tr_input_type_t;
+
+static const float g_input_snap_radius[TR_INPUT_TYPE_COUNT] = {
+    TR_KNOB_RADIUS,
+    TR_PLUG_SNAP_RADIUS,
+    TR_PLUG_SNAP_RADIUS,
+};
+
 typedef struct tr_gui_input
 {
     void* active_value;
@@ -169,18 +199,101 @@ typedef struct tr_gui_input
     const float* drag_output;
     Color drag_color;
     bool do_not_process_input;
-
-    float closest_distance;
-    Vector2 closest_plug;
-    const float** closest_input;
-    const float* closest_output;
-    Vector2 snap_pos;
+    
+    float closest_distance[TR_INPUT_TYPE_COUNT];
+    const tr_gui_module_t* closest_module[TR_INPUT_TYPE_COUNT];
+    size_t closest_field[TR_INPUT_TYPE_COUNT];
+    tr_input_type_t closest_input;
 
     tr_cable_draw_command_t cable_draws[1024];
     size_t cable_draw_count;
 
     Camera2D camera;
 } tr_gui_input_t;
+
+void tr_update_closest_input_state(tr_gui_input_t* state, const rack_t* rack, Vector2 mouse)
+{
+    for (int i = 0; i < TR_INPUT_TYPE_COUNT; ++i)
+    {
+        state->closest_distance[i] = FLT_MAX;
+        state->closest_module[i] = NULL;
+        state->closest_field[i] = SIZE_MAX;
+    }
+    
+    for (size_t module_index = 0; module_index < rack->gui_module_count; ++module_index)
+    {
+        const tr_gui_module_t* module = &rack->gui_modules[module_index];
+        const tr_module_info_t* module_info = &tr_module_infos[module->type];
+        for (size_t i = 0; i < module_info->field_count; ++i)
+        {
+            const tr_module_field_info_t* field_info = &module_info->fields[i];
+
+            tr_input_type_t input_type = TR_INPUT_TYPE_COUNT;
+            switch (field_info->type)
+            {
+                case TR_MODULE_FIELD_INPUT_BUFFER:
+                    input_type = TR_INPUT_TYPE_INPUT_PLUG;
+                    break;
+                case TR_MODULE_FIELD_BUFFER:
+                    input_type = TR_INPUT_TYPE_OUTPUT_PLUG;
+                    break;
+                case TR_MODULE_FIELD_INPUT_FLOAT:
+                case TR_MODULE_FIELD_INPUT_INT:
+                    input_type = TR_INPUT_TYPE_KNOB;
+                    break;
+                default:
+                    break;
+            }
+
+            if (input_type == TR_INPUT_TYPE_COUNT)
+            {
+                continue;
+            }
+
+            const Vector2 center = {(float)module->x + field_info->x, (float)module->y + field_info->y};
+            const float distance = Vector2Distance(center, mouse) - g_input_snap_radius[input_type];
+            
+            if (distance < state->closest_distance[input_type])
+            {
+                state->closest_distance[input_type] = distance;
+                state->closest_module[input_type] = module;
+                state->closest_field[input_type] = i;
+            }
+        }
+    }
+
+    tr_input_type_t closest_input_type = TR_INPUT_TYPE_COUNT;
+    float closest_input_distance = FLT_MAX;
+
+    for (int i = 0; i < TR_INPUT_TYPE_COUNT; ++i)
+    {
+        if (state->closest_distance[i] < closest_input_distance)
+        {
+            closest_input_distance = state->closest_distance[i];
+            closest_input_type = i;
+        }
+    }
+
+    state->closest_input = closest_input_type;
+}
+
+static Vector2 tr_snap_to_input(tr_gui_input_t* state, tr_input_type_t input_type, Vector2 pos)
+{
+    const tr_gui_module_t* module = state->closest_module[input_type];
+    if (module == NULL)
+    {
+        return pos;
+    }
+
+    const size_t field_index = state->closest_field[input_type];
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+
+    const Vector2 center = {(float)module->x + field_info->x, (float)module->y + field_info->y};
+    //const bool in_range = Vector2Distance(pos, center) < 0.0f;
+    const bool in_range = state->closest_distance[input_type] < 0.0f;
+    return in_range ? center : pos;
+}
 
 static tr_gui_input_t g_input = {
     .camera.zoom = 1.0f,
@@ -355,7 +468,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
             if (module_info->fields[field_index].type == TR_MODULE_FIELD_BUFFER)
             {
                 const tr_output_plug_t p = {cmd->x, cmd->y, module};
-                float* field_addr = get_field_address(module->type, module->data, field_index);
+                float* field_addr = get_field_address(module, field_index);
                 hmput(rack->output_plugs, field_addr, p);
             }
         }
@@ -402,26 +515,6 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
 
 
 }
-
-#define TR_KNOB_RADIUS (18)
-#define TR_KNOB_PADDING (2)
-#define TR_KNOB_TIP_WIDTH (4.0f)
-#define TR_KNOB_TIP_SIZE (0.5f) // multiplied by radius
-#define TR_PLUG_RADIUS (12)
-#define TR_PLUG_PADDING (4)
-#define TR_MODULE_PADDING (2)
-
-#define COLOR_BACKGROUND GetColor(0x3c5377ff)
-#define COLOR_MODULE_BACKGROUND GetColor(0xfff3c2ff)
-#define COLOR_MODULE_TEXT GetColor(0x3c5377ff)
-#define COLOR_PLUG_HOLE GetColor(0x303030ff)
-#define COLOR_PLUG_BORDER GetColor(0xa5a5a5ff)
-#define COLOR_PLUG_HIGHLIGHT GetColor(0xe0780fff)
-#define COLOR_PLUG_OUTPUT GetColor(0xddc55eff)
-#define COLOR_KNOB GetColor(0xddc55eff)
-#define COLOR_KNOB_TIP GetColor(0xffffffff)
-
-#define TR_CABLE_ALPHA 0.75f
 
 static Font g_font;
 
@@ -480,9 +573,9 @@ void tr_gui_module_end(void)
 {
 }
 
-void tr_gui_knob_base(float value, float min, float max, int x, int y)
+void tr_gui_knob_base(float value, float min, float max, int x, int y, bool highlight)
 {
-    DrawCircle(x, y, TR_KNOB_RADIUS, COLOR_KNOB);
+    DrawCircle(x, y, TR_KNOB_RADIUS, highlight ? COLOR_PLUG_HIGHLIGHT : COLOR_KNOB);
     
     const float t = (value - min) / fmaxf(max - min, 0.01f);
     const float t0 = (t - 0.5f) * 0.9f;
@@ -492,15 +585,32 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y)
     DrawRectanglePro(rect, (Vector2){TR_KNOB_TIP_WIDTH * 0.5f, TR_KNOB_RADIUS}, angle * RAD2DEG, COLOR_KNOB_TIP);
 }
 
-void tr_gui_knob_float(const tr_gui_module_t* module, const tr_module_field_info_t* field)
+void tr_gui_knob_float(const tr_gui_module_t* module, size_t field_index)
 {
-    const int x = module->x + field->x;
-    const int y = module->y + field->y;
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+    const int x = module->x + field_info->x;
+    const int y = module->y + field_info->y;
 
-    //void* module_addr = tr_get_module_address(rack, module->type, module->index);
-    float* value = (float*)((uint8_t*)module->data + field->offset);
-    const float min = field->min;
-    const float max = field->max;
+    float* value = get_field_address(module, field_index);
+    const float min = field_info->min;
+    const float max = field_info->max;
+
+    bool highlight = false;
+    if (g_input.closest_module[g_input.closest_input] == module &&
+        g_input.closest_field[g_input.closest_input] == field_index &&
+        g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        highlight = true;
+    }
+    if (g_input.active_value == value)
+    {
+        highlight = true;
+    }
+    if (g_input.drag_input || g_input.drag_output)
+    {
+        highlight = false;
+    }
 
     if (!g_input.do_not_process_input)
     {
@@ -523,23 +633,41 @@ void tr_gui_knob_float(const tr_gui_module_t* module, const tr_module_field_info
         }
     }
 
-    tr_gui_knob_base(*value, min, max, x, y);
+    tr_gui_knob_base(*value, min, max, x, y, highlight);
 }
 
-void tr_gui_knob_int(const tr_gui_module_t* module, const tr_module_field_info_t* field)
+void tr_gui_knob_int(const tr_gui_module_t* module, size_t field_index)
 {
-    const int x = module->x + field->x;
-    const int y = module->y + field->y;
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+    const int x = module->x + field_info->x;
+    const int y = module->y + field_info->y;
+    int* value = get_field_address(module, field_index);
+    
+    bool highlight = false;
+    if (g_input.closest_module[g_input.closest_input] == module &&
+        g_input.closest_field[g_input.closest_input] == field_index &&
+        g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        highlight = true;
+    }
+    if (g_input.active_value == value)
+    {
+        highlight = true;
+    }
+    if (g_input.drag_input || g_input.drag_output)
+    {
+        highlight = false;
+    }
 
     if (g_input.do_not_process_input)
     {
-        tr_gui_knob_base(0.0f, 0.0f, 1.0f, x, y);
+        tr_gui_knob_base(0.0f, 0.0f, 1.0f, x, y, highlight);
     }
     else
     {
-        int* value = (int*)((uint8_t*)module->data + field->offset);
-        const int min = field->min_int;
-        const int max = field->max_int;
+        const int min = field_info->min_int;
+        const int max = field_info->max_int;
         
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
@@ -561,20 +689,35 @@ void tr_gui_knob_int(const tr_gui_module_t* module, const tr_module_field_info_t
             if (*value > max) *value = max;
         }
 
-        tr_gui_knob_base((float)*value, (float)min, (float)max, x, y);
+        tr_gui_knob_base((float)*value, (float)min, (float)max, x, y, highlight);
     }
 }
 
-static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
+static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, size_t field_index)
 {
-    const int x = module->x + field->x;
-    const int y = module->y + field->y;
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+    const int x = module->x + field_info->x;
+    const int y = module->y + field_info->y;
     const Vector2 center = {(float)x, (float)y};
-    const float** value = (const float**)((uint8_t*)module->data + field->offset);
+
+    const float** value = get_field_address(module, field_index);
+
     //const bool dim = g_input.drag_input != NULL;
 
-    //DrawCircle(x, y, TR_PLUG_RADIUS + 5, dim ? LIGHTGRAY : COLOR_PLUG_OUTPUT);
-    DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
+    bool highlight = false;
+    if (g_input.closest_module[g_input.closest_input] == module &&
+        g_input.closest_field[g_input.closest_input] == field_index &&
+        g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        highlight = true;
+    }
+    if (g_input.active_value != NULL || g_input.drag_input != NULL)
+    {
+        highlight = false;
+    }
+
+    DrawCircle(x, y, TR_PLUG_RADIUS, highlight ? COLOR_PLUG_HIGHLIGHT : COLOR_PLUG_BORDER);
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, COLOR_PLUG_HOLE);
     
     if (*value != NULL)
@@ -588,100 +731,64 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
         };
     }
 
-    if (!g_input.do_not_process_input)
+    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+
+    if (g_input.drag_input == value)
     {
-        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-        const float distance = Vector2Distance(mouse, center);
-
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-            distance < TR_PLUG_RADIUS)
-        {
-            if (*value != NULL)
-            {
-                const tr_input_plug_kv_t* plug = hmgetp_null(rack->input_plugs, value);
-                assert(plug != NULL);
-                g_input.drag_output = *value;
-                g_input.drag_color = plug->value.color;
-                *value = NULL;
-                hmdel(rack->input_plugs, value);
-            }
-            else
-            {
-                g_input.drag_input = value;
-                g_input.drag_color = tr_random_cable_color();
-            }
-        }
-
-        if (g_input.drag_input == value)
-        {
-            g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-                .from = center,
-                .to = g_input.snap_pos,
-                .color = g_input.drag_color,
-            };
-        }
-
-        if (g_input.drag_output != NULL)
-        {
-            if (distance < g_input.closest_distance)
-            {
-                g_input.closest_distance = distance;
-                g_input.closest_plug = center;
-                g_input.closest_input = value;
-            }
-        }
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = tr_snap_to_input(&g_input, TR_INPUT_TYPE_OUTPUT_PLUG, mouse),
+            .color = g_input.drag_color,
+        };
     }
 }
 
-static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, const tr_module_field_info_t* field)
+static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, size_t field_index)
 {
-    const int x = module->x + field->x;
-    const int y = module->y + field->y;
+    const tr_module_info_t* module_info = &tr_module_infos[module->type];
+    const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+    const int x = module->x + field_info->x;
+    const int y = module->y + field_info->y;
     const bool dim = g_input.drag_output != NULL;
+
+    bool highlight = false;
+    if (g_input.closest_module[g_input.closest_input] == module &&
+        g_input.closest_field[g_input.closest_input] == field_index &&
+        g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        highlight = true;
+    }
+    if (g_input.active_value != NULL)
+    {
+        highlight = false;
+    }
+
+    Color bgcolor = COLOR_PLUG_OUTPUT;
+    if (highlight) bgcolor = COLOR_PLUG_HIGHLIGHT;
+    if (dim) bgcolor = LIGHTGRAY;
     
     const int rw = TR_PLUG_RADIUS + 4;
     Rectangle bgrect = {(float)x - rw, (float)y - rw, 2.0f * rw, 2.0f * rw};
-    DrawRectangleRounded(bgrect, 0.25f, 8, dim ? LIGHTGRAY : COLOR_PLUG_OUTPUT);
+    DrawRectangleRounded(bgrect, 0.25f, 8, bgcolor);
     DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
     DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, COLOR_PLUG_HOLE);
 
-    if (!g_input.do_not_process_input)
+    const float* buffer = get_field_address(module, field_index);
+
+    const Vector2 center = {(float)x, (float)y};
+    const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+
+    if (g_input.drag_output == buffer)
     {
-        const float* buffer = (float*)((uint8_t*)module->data + field->offset);
-
-        const Vector2 center = {(float)x, (float)y};
-        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-        const float distance = Vector2Distance(mouse, center);
-        
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-            distance < TR_PLUG_RADIUS)
-        {
-            g_input.drag_output = buffer;
-            g_input.drag_color = tr_random_cable_color();
-        }
-
-        if (g_input.drag_output == buffer)
-        {
-            g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-                .from = center,
-                .to = g_input.snap_pos,
-                .color = g_input.drag_color,
-            };
-        }
-
-        const tr_output_plug_t plug = {x, y, module};
-        hmput(rack->output_plugs, buffer, plug);
-
-        if (g_input.drag_input != NULL)
-        {
-            if (distance < g_input.closest_distance)
-            {
-                g_input.closest_distance = distance;
-                g_input.closest_plug = center;
-                g_input.closest_output = buffer;
-            }
-        }
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = tr_snap_to_input(&g_input, TR_INPUT_TYPE_INPUT_PLUG, mouse),
+            .color = g_input.drag_color,
+        };
     }
+    
+    const tr_output_plug_t plug = {x, y, module};
+    hmput(rack->output_plugs, buffer, plug);
 }
 
 void tr_led(int x, int y, Color color)
@@ -754,17 +861,17 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     tr_gui_module_begin(module);
 
-    for (int i = 0; i < module_info->field_count; ++i)
+    for (size_t field_index = 0; field_index < module_info->field_count; ++field_index)
     {
-        const tr_module_field_info_t* field_info = &module_info->fields[i];
+        const tr_module_field_info_t* field_info = &module_info->fields[field_index];
         switch (field_info->type)
         {
             case TR_MODULE_FIELD_FLOAT: break;
             case TR_MODULE_FIELD_INT: break;
-            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(module, field_info); break;
-            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(module, field_info); break;
-            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, module, field_info); break;
-            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, module, field_info); break;
+            case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(module, field_index); break;
+            case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(module, field_index); break;
+            case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, module, field_index); break;
+            case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, module, field_index); break;
         }
     }
 
@@ -1179,11 +1286,43 @@ void tr_frame_update_draw(void)
         app->single_step = true;
     }
 
-    g_input.snap_pos = g_input.closest_plug;
-    g_input.closest_plug = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-    g_input.closest_distance = TR_PLUG_RADIUS + 8.0f;
-    g_input.closest_input = NULL;
-    g_input.closest_output = NULL;
+    tr_update_closest_input_state(&g_input, rack, GetScreenToWorld2D(GetMousePosition(), g_input.camera));
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        if (g_input.closest_distance[g_input.closest_input] < 0.0f)
+        {
+            const tr_gui_module_t* module = g_input.closest_module[g_input.closest_input];
+            const size_t field = g_input.closest_field[g_input.closest_input];
+
+            if (g_input.closest_input == TR_INPUT_TYPE_INPUT_PLUG)
+            {
+                const float** input = get_field_address(module, field);
+
+                if (*input != NULL)
+                {
+                    const tr_input_plug_kv_t* plug = hmgetp_null(rack->input_plugs, input);
+                    assert(plug != NULL);
+                    g_input.drag_output = *input;
+                    g_input.drag_color = plug->value.color;
+                    *input = NULL;
+                    hmdel(rack->input_plugs, input);
+                }
+                else
+                {
+                    g_input.drag_input = input;
+                    g_input.drag_color = tr_random_cable_color();
+                }
+            }
+            else if (g_input.closest_input == TR_INPUT_TYPE_OUTPUT_PLUG)
+            {
+                const float* output = get_field_address(module, field);
+
+                g_input.drag_output = output;
+                g_input.drag_color = tr_random_cable_color();
+            }
+        }
+    }
 
     BeginDrawing();
     ClearBackground(COLOR_BACKGROUND);
@@ -1220,21 +1359,36 @@ void tr_frame_update_draw(void)
         DrawCircleV(draw->to, TR_PLUG_RADIUS - TR_PLUG_PADDING - 3.5f, ColorAlpha(draw->color, 1.0f));
     }
 
-    EndMode2D();
+#if 0
+    for (int i = 0; i < TR_INPUT_TYPE_COUNT; ++i)
+    {
+        const tr_gui_module_t* module = g_input.closest_module[i];
+        if (module == NULL) continue;
+        const size_t field_index = g_input.closest_field[i];
+        const tr_module_info_t* module_info = &tr_module_infos[module->type];
+        const tr_module_field_info_t* field_info = &module_info->fields[field_index];
 
-    // both should never be non-NULL
-    assert((g_input.closest_input && g_input.closest_output) == 0);
+        const Vector2 center = {(float)module->x + field_info->x, (float)module->y + field_info->y};
+        const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+        DrawLineV(center, mouse, MAGENTA);
+    }
+#endif
+
+    EndMode2D();
 
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
     {
         if (g_input.drag_input != NULL)
         {
-            if (g_input.closest_output != NULL)
+            if (g_input.closest_distance[TR_INPUT_TYPE_OUTPUT_PLUG] < 0.0f)
             {
+                const tr_gui_module_t* module = g_input.closest_module[TR_INPUT_TYPE_OUTPUT_PLUG];
+                const size_t field_index = g_input.closest_field[TR_INPUT_TYPE_OUTPUT_PLUG];
+                const float* output = get_field_address(module, field_index);
+
                 const tr_input_plug_t plug = {g_input.drag_color};
                 hmput(rack->input_plugs, g_input.drag_input, plug);
-
-                *g_input.drag_input = g_input.closest_output;
+                *g_input.drag_input = output;
             }
             else
             {
@@ -1244,12 +1398,15 @@ void tr_frame_update_draw(void)
 
         if (g_input.drag_output != NULL)
         {
-            if (g_input.closest_input != NULL)
+            if (g_input.closest_distance[TR_INPUT_TYPE_INPUT_PLUG] < 0.0f)
             {
-                *g_input.closest_input = g_input.drag_output;
+                const tr_gui_module_t* module = g_input.closest_module[TR_INPUT_TYPE_INPUT_PLUG];
+                const size_t field_index = g_input.closest_field[TR_INPUT_TYPE_INPUT_PLUG];
+                const float** input = get_field_address(module, field_index);
 
                 const tr_input_plug_t plug = {g_input.drag_color};
-                hmput(rack->input_plugs, g_input.closest_input, plug);
+                hmput(rack->input_plugs, input, plug);
+                *input = g_input.drag_output;
             }
         }
 
