@@ -170,6 +170,12 @@ typedef struct tr_gui_input
     Color drag_color;
     bool do_not_process_input;
 
+    float closest_distance;
+    Vector2 closest_plug;
+    const float** closest_input;
+    const float* closest_output;
+    Vector2 snap_pos;
+
     tr_cable_draw_command_t cable_draws[1024];
     size_t cable_draw_count;
 
@@ -565,34 +571,30 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
     const int y = module->y + field->y;
     const Vector2 center = {(float)x, (float)y};
     const float** value = (const float**)((uint8_t*)module->data + field->offset);
-    const bool highlight = g_input.drag_output != NULL;
+    //const bool dim = g_input.drag_input != NULL;
 
+    //DrawCircle(x, y, TR_PLUG_RADIUS + 5, dim ? LIGHTGRAY : COLOR_PLUG_OUTPUT);
     DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
+    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, COLOR_PLUG_HOLE);
     
-    Color inner_color = COLOR_PLUG_HOLE;
-    if (highlight)
+    if (*value != NULL)
     {
-        inner_color = COLOR_PLUG_HIGHLIGHT;
+        const tr_output_plug_t plug = hmget(rack->output_plugs, *value);
+        const tr_input_plug_t input_plug = hmget(rack->input_plugs, value);
+        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
+            .from = center,
+            .to = {(float)plug.x, (float)plug.y},
+            .color = input_plug.color,
+        };
     }
-    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, inner_color);
-    
+
     if (!g_input.do_not_process_input)
     {
         const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-
-        if (g_input.drag_output != NULL && 
-            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
-            Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
-        {
-            *value = g_input.drag_output;
-            g_input.drag_output = NULL;
-
-            const tr_input_plug_t plug = {g_input.drag_color};
-            hmput(rack->input_plugs, value, plug);
-        }
+        const float distance = Vector2Distance(mouse, center);
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-            Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
+            distance < TR_PLUG_RADIUS)
         {
             if (*value != NULL)
             {
@@ -614,21 +616,20 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, const
         {
             g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
                 .from = center,
-                .to = mouse,
+                .to = g_input.snap_pos,
                 .color = g_input.drag_color,
             };
         }
-    }
 
-    if (*value != NULL)
-    {
-        const tr_output_plug_t plug = hmget(rack->output_plugs, *value);
-        const tr_input_plug_t input_plug = hmget(rack->input_plugs, value);
-        g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
-            .from = center,
-            .to = {(float)plug.x, (float)plug.y},
-            .color = input_plug.color,
-        };
+        if (g_input.drag_output != NULL)
+        {
+            if (distance < g_input.closest_distance)
+            {
+                g_input.closest_distance = distance;
+                g_input.closest_plug = center;
+                g_input.closest_input = value;
+            }
+        }
     }
 }
 
@@ -636,13 +637,13 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, cons
 {
     const int x = module->x + field->x;
     const int y = module->y + field->y;
-    const bool highlight = g_input.drag_input != NULL;
+    const bool dim = g_input.drag_output != NULL;
     
     const int rw = TR_PLUG_RADIUS + 4;
     Rectangle bgrect = {(float)x - rw, (float)y - rw, 2.0f * rw, 2.0f * rw};
-    DrawRectangleRounded(bgrect, 0.25f, 8, COLOR_PLUG_OUTPUT);
+    DrawRectangleRounded(bgrect, 0.25f, 8, dim ? LIGHTGRAY : COLOR_PLUG_OUTPUT);
     DrawCircle(x, y, TR_PLUG_RADIUS, COLOR_PLUG_BORDER);
-    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, highlight ? COLOR_PLUG_HIGHLIGHT : COLOR_PLUG_HOLE);
+    DrawCircle(x, y, TR_PLUG_RADIUS - TR_PLUG_PADDING, COLOR_PLUG_HOLE);
 
     if (!g_input.do_not_process_input)
     {
@@ -650,38 +651,36 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, cons
 
         const Vector2 center = {(float)x, (float)y};
         const Vector2 mouse = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
-
-        if (g_input.drag_input != NULL && 
-            IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
-            Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
-        {
-            const tr_input_plug_t plug = {g_input.drag_color};
-            hmput(rack->input_plugs, g_input.drag_input, plug);
-
-            *g_input.drag_input = buffer;
-            g_input.drag_input = NULL;
-        }
+        const float distance = Vector2Distance(mouse, center);
         
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+            distance < TR_PLUG_RADIUS)
         {
-            if (Vector2Distance(mouse, center) < TR_PLUG_RADIUS)
-            {
-                g_input.drag_output = buffer;
-                g_input.drag_color = tr_random_cable_color();
-            }
+            g_input.drag_output = buffer;
+            g_input.drag_color = tr_random_cable_color();
         }
 
         if (g_input.drag_output == buffer)
         {
             g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
                 .from = center,
-                .to = mouse,
+                .to = g_input.snap_pos,
                 .color = g_input.drag_color,
             };
         }
 
         const tr_output_plug_t plug = {x, y, module};
         hmput(rack->output_plugs, buffer, plug);
+
+        if (g_input.drag_input != NULL)
+        {
+            if (distance < g_input.closest_distance)
+            {
+                g_input.closest_distance = distance;
+                g_input.closest_plug = center;
+                g_input.closest_output = buffer;
+            }
+        }
     }
 }
 
@@ -1180,6 +1179,12 @@ void tr_frame_update_draw(void)
         app->single_step = true;
     }
 
+    g_input.snap_pos = g_input.closest_plug;
+    g_input.closest_plug = GetScreenToWorld2D(GetMousePosition(), g_input.camera);
+    g_input.closest_distance = TR_PLUG_RADIUS + 8.0f;
+    g_input.closest_input = NULL;
+    g_input.closest_output = NULL;
+
     BeginDrawing();
     ClearBackground(COLOR_BACKGROUND);
 
@@ -1217,12 +1222,37 @@ void tr_frame_update_draw(void)
 
     EndMode2D();
 
+    // both should never be non-NULL
+    assert((g_input.closest_input && g_input.closest_output) == 0);
+
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
     {
         if (g_input.drag_input != NULL)
         {
-            *g_input.drag_input = NULL;
+            if (g_input.closest_output != NULL)
+            {
+                const tr_input_plug_t plug = {g_input.drag_color};
+                hmput(rack->input_plugs, g_input.drag_input, plug);
+
+                *g_input.drag_input = g_input.closest_output;
+            }
+            else
+            {
+                *g_input.drag_input = NULL;
+            }
         }
+
+        if (g_input.drag_output != NULL)
+        {
+            if (g_input.closest_input != NULL)
+            {
+                *g_input.closest_input = g_input.drag_output;
+
+                const tr_input_plug_t plug = {g_input.drag_color};
+                hmput(rack->input_plugs, g_input.closest_input, plug);
+            }
+        }
+
         g_input.active_value = NULL;
         g_input.drag_module = NULL;
         g_input.drag_input = NULL;
