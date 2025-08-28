@@ -4,7 +4,7 @@
 #endif
 
 #ifndef __EMSCRIPTEN__
-#define TR_RECORDING_FEATURE
+//#define TR_RECORDING_FEATURE
 #endif
 
 #include "timer.h"
@@ -299,6 +299,34 @@ static tr_gui_input_t g_input = {
     .camera.zoom = 1.0f,
 };
 
+typedef struct timer_buffer
+{
+    timer_t timer;
+    size_t index;
+    float samples[32];
+} timer_buffer_t;
+
+static float tb_avg(const timer_buffer_t* tb)
+{
+    float avg = 0.0f;
+    for (size_t i = 0; i < tr_countof(tb->samples); ++i)
+    {
+        avg += tb->samples[i];
+    }
+    return avg * (1.0f / tr_countof(tb->samples));
+}
+
+static void tb_start(timer_buffer_t* tb)
+{
+    timer_start(&tb->timer);
+}
+
+static void tb_stop(timer_buffer_t* tb)
+{
+    tb->samples[tb->index] = (float)timer_reset(&tb->timer);
+    tb->index = (tb->index + 1) % tr_countof(tb->samples);
+}
+
 typedef struct app
 {
     rack_t rack;
@@ -318,11 +346,10 @@ typedef struct app
     bool single_step;
     float fadein;
 
-    size_t timer_produce_final_mix_index;
-    double timer_produce_final_mix[32];
-
-    size_t timer_index;
-    double timer_frame_update_draw[32];
+    timer_buffer_t tb_produce_final_mix;
+    timer_buffer_t tb_frame_update_draw;
+    timer_buffer_t tb_draw_modules;
+    timer_buffer_t tb_update_input;
 } app_t;
 
 static app_t g_app = {0};
@@ -866,12 +893,11 @@ void tr_gui_module_draw(rack_t* rack, tr_gui_module_t* module)
         const tr_module_field_info_t* field_info = &module_info->fields[field_index];
         switch (field_info->type)
         {
-            case TR_MODULE_FIELD_FLOAT: break;
-            case TR_MODULE_FIELD_INT: break;
             case TR_MODULE_FIELD_INPUT_FLOAT: tr_gui_knob_float(module, field_index); break;
             case TR_MODULE_FIELD_INPUT_INT: tr_gui_knob_int(module, field_index); break;
             case TR_MODULE_FIELD_INPUT_BUFFER: tr_gui_plug_input(rack, module, field_index); break;
             case TR_MODULE_FIELD_BUFFER: tr_gui_plug_output(rack, module, field_index); break;
+            default: break;
         }
     }
 
@@ -1144,13 +1170,9 @@ static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
 
 void tr_produce_final_mix(int16_t* output, rack_t* rack)
 {
-    timer_t timer;
-    timer_start(&timer);
-
+    tb_start(&g_app.tb_produce_final_mix);
     tr_produce_final_mix_internal(output, rack);
-
-    g_app.timer_produce_final_mix[g_app.timer_produce_final_mix_index % tr_countof(g_app.timer_produce_final_mix)] = timer_reset(&timer);
-    ++g_app.timer_produce_final_mix_index;
+    tb_stop(&g_app.tb_produce_final_mix);
 }
 
 #ifdef TR_AUDIO_CALLBACK
@@ -1241,8 +1263,7 @@ void tr_frame_update_draw(void)
     app_t* app = &g_app;
     rack_t* rack = &app->rack;
 
-    timer_t timer;
-    timer_start(&timer);
+    tb_start(&app->tb_frame_update_draw);
 
 #if 1
     g_input.camera.offset.x = GetScreenWidth() * 0.5f;
@@ -1286,6 +1307,8 @@ void tr_frame_update_draw(void)
         app->single_step = true;
     }
 
+    tb_start(&app->tb_update_input);
+
     tr_update_closest_input_state(&g_input, rack, GetScreenToWorld2D(GetMousePosition(), g_input.camera));
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
@@ -1324,6 +1347,8 @@ void tr_frame_update_draw(void)
         }
     }
 
+    tb_stop(&app->tb_update_input);
+
     BeginDrawing();
     ClearBackground(COLOR_BACKGROUND);
 
@@ -1343,12 +1368,16 @@ void tr_frame_update_draw(void)
 
     g_input.cable_draw_count = 0;
     
+    tb_start(&app->tb_draw_modules);
+
     g_input.do_not_process_input = app->picker_mode;
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
         tr_gui_module_draw(rack, &rack->gui_modules[i]);
     }
     g_input.do_not_process_input = false;
+
+    tb_stop(&app->tb_draw_modules);
 
     for (size_t i = 0; i < g_input.cable_draw_count; ++i)
     {
@@ -1483,31 +1512,31 @@ void tr_frame_update_draw(void)
 #endif
 
     {
-        double avg;
+        float avg;
         char message[64];
         Vector2 message_size;
         Vector2 pos = {0.0f, (float)GetScreenHeight()};
         const float font_size = 18.0f;
 
-        avg = 0.0;
-        for (size_t i = 0; i < tr_countof(g_app.timer_produce_final_mix); ++i)
-        {
-            avg += g_app.timer_produce_final_mix[i];
-        }
-        avg *= (1.0 / tr_countof(g_app.timer_produce_final_mix));
-
+        avg = tb_avg(&g_app.tb_produce_final_mix);
         sprintf(message, "final mix: %1.3f ms", avg);
         message_size = MeasureTextEx(g_font, message, font_size, 0);
         pos.y -= message_size.y;
         DrawTextEx(g_font, message, pos, font_size, 0, WHITE);
 
-        avg = 0.0;
-        for (size_t i = 0; i < tr_countof(g_app.timer_frame_update_draw); ++i)
-        {
-            avg += g_app.timer_frame_update_draw[i];
-        }
-        avg *= (1.0 / tr_countof(g_app.timer_frame_update_draw));
+        avg = tb_avg(&g_app.tb_update_input);
+        sprintf(message, "update_input: %1.3f ms", avg);
+        message_size = MeasureTextEx(g_font, message, font_size, 0);
+        pos.y -= message_size.y;
+        DrawTextEx(g_font, message, pos, font_size, 0, WHITE);
+
+        avg = tb_avg(&g_app.tb_draw_modules);
+        sprintf(message, "draw_modules: %1.3f ms", avg);
+        message_size = MeasureTextEx(g_font, message, font_size, 0);
+        pos.y -= message_size.y;
+        DrawTextEx(g_font, message, pos, font_size, 0, WHITE);
         
+        avg = tb_avg(&g_app.tb_frame_update_draw);
         sprintf(message, "frame: %1.3f ms", avg);
         message_size = MeasureTextEx(g_font, message, font_size, 0);
         pos.y -= message_size.y;
@@ -1594,9 +1623,7 @@ void tr_frame_update_draw(void)
     }
 #endif
 
-    g_app.timer_frame_update_draw[g_app.timer_index % tr_countof(g_app.timer_frame_update_draw)] = timer_reset(&timer);
-    ++g_app.timer_index;
-
+    tb_stop(&g_app.tb_frame_update_draw);
 }
 
 static const char* TEST = "\
