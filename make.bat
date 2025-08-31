@@ -41,7 +41,7 @@ if "!sources!"=="" (
 
 echo Building...
 
-cl.exe /nologo /Zi /Od /W4 /WX /EHsc ^
+cl.exe /nologo /Zi /Od /W4 /WX /EHsc /wd4200 ^
     %sources% ^
     /Fe:"tinyrack.exe" ^
     /Fo:"obj\\" ^
