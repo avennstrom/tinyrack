@@ -35,15 +35,28 @@
     <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
     <script type='text/javascript'>
       var statusElement = document.getElementById('status');
-      var canvasElement = document.getElementById('canvas');
+      var canvas = document.getElementById('canvas');
 
       // As a default initial behavior, pop up an alert when webgl context is lost. To make your
       // application robust, you may want to override this behavior before shipping!
       // See http://www.khronos.org/registry/webgl/specs/latest/1.0/#5.15.2
-      canvasElement.addEventListener("webglcontextlost", (e) => {
+      canvas.addEventListener("webglcontextlost", (e) => {
         alert('WebGL context lost. You will need to reload the page.');
         e.preventDefault();
       }, false);
+
+      function resizeCanvasToWindow() {
+        function resize() {
+          canvas.width  = window.innerWidth;
+          canvas.height = window.innerHeight;
+          if (Module) Module._js_canvas_size(canvas.width, canvas.height);
+          console.log('cock and balls');
+        }
+        window.addEventListener("resize", resize);
+        resize();
+      }
+      
+      resizeCanvasToWindow();
 
       var Module = {
         print(...args) {
@@ -54,7 +67,6 @@
           //text = text.replace('\n', '<br>', 'g');
           console.log(...args);
         },
-        canvas: canvasElement,
         // setStatus(text) {
         //   statusElement.innerHTML = text;
         // },
@@ -65,7 +77,7 @@
         // },
         onRuntimeInitialized() {
           document.body.removeChild(statusElement);
-          setTimeout(() => {GLFW.isHiDPIAware = () => true}, 1); // HACK
+          Module._js_canvas_size(canvas.width, canvas.height);
         }
       };
       window.onerror = () => {

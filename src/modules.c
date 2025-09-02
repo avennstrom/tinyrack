@@ -1,8 +1,8 @@
 #include "modules.h"
+#include "platform.h"
 
 #include <math.h>
 #include <string.h>
-#include <raymath.h>
 
 float tr_hz(float voct)
 {
@@ -138,7 +138,7 @@ static inline float tr__time_to_coeff(float t_sec)
     //if (t_sec <= 0.0f) return 0.0f;
     float c = expf(-1.0f / (t_sec * (float)TR_SAMPLE_RATE));
     // numerical guard
-    return Clamp(c, 0.0f, 1.0f);
+    return float_clamp(c, 0.0f, 1.0f);
 }
 
 static inline float map_knob_exp(float x, float t_min, float t_max, float skew)

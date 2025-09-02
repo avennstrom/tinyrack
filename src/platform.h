@@ -9,6 +9,7 @@ typedef struct float2 {
     float y;
 } float2;
 
+float float_lerp(float a, float b, float t);
 // Remap input value within input range to output range
 float float_remap(float value, float inputStart, float inputEnd, float outputStart, float outputEnd);
 float float_clamp(float value, float min, float max);
@@ -154,7 +155,9 @@ typedef enum keyboard_key
 typedef void(*platform_audio_callback)(int16_t*, size_t);
 
 void platform_init(size_t sample_rate, size_t sample_count, platform_audio_callback audio_callback);
+#ifndef PLATFORM_WEB
 bool platform_running(void);
+#endif
 void platform_render(const render_buffer_t* rb);
 
 float2 get_screen_size(void);

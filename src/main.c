@@ -13,10 +13,10 @@
 #include "platform.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <memory.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <math.h>
 #include <assert.h>
 #include <time.h>
@@ -114,7 +114,7 @@ typedef struct rack
 
 static render_buffer_t g_rb;
 
-void draw_rectangle_rounded(rectangle_t rec, float roundness, color_t color)
+static void draw_rectangle_rounded(rectangle_t rec, float roundness, color_t color)
 {
     cmd_draw_rectangle_rounded_t* cmd = rb_draw_rectangle_rounded(&g_rb);
     cmd->color = color;
@@ -504,7 +504,7 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
     {
         const tr_parser_cmd_add_module_t* cmd = &parser.modules[i];
 
-        printf("ADD MODULE: %s %d %d\n", tr_module_infos[cmd->type].id, cmd->x, cmd->y);
+        //printf("ADD MODULE: %s %d %d\n", tr_module_infos[cmd->type].id, cmd->x, cmd->y);
 
         tr_gui_module_t* module = tr_rack_create_module(rack, cmd->type);
         module->x = cmd->x;
@@ -532,11 +532,11 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
         switch (cmd->type)
         {
             case TR_SET_VALUE:
-                printf("SET VALUE: %zu:%zu = %.*llx\n", cmd->module_index, cmd->field_offset, (int)cmd->value_size * 2, *(uint64_t*)cmd->value);
+                //printf("SET VALUE: %zu:%zu = %.*llx\n", cmd->module_index, cmd->field_offset, (int)cmd->value_size * 2, *(uint64_t*)cmd->value);
                 memcpy(field_addr, &cmd->value, cmd->value_size);
                 break;
             case TR_SET_VALUE_BUFFER:
-                printf("SET BUFFER: %zu:%zu = %zu:%zu\n", cmd->module_index, cmd->field_offset, cmd->target_module_index, cmd->target_field_offset);
+                //printf("SET BUFFER: %zu:%zu = %zu:%zu\n", cmd->module_index, cmd->field_offset, cmd->target_module_index, cmd->target_field_offset);
                 const tr_gui_module_t* target_module = &rack->gui_modules[cmd->target_module_index];
                 void* target_field_addr = (uint8_t*)target_module->data + cmd->target_field_offset;
                 //*(float**)field_addr = (float*)target_field_addr;
@@ -1335,6 +1335,8 @@ void tr_frame_update_draw(void)
             g_input.camera.target.x -= get_mouse_delta().x / g_input.camera.zoom;
             g_input.camera.target.y -= get_mouse_delta().y / g_input.camera.zoom;
         }
+
+        printf("%f %f\n", g_input.camera.target.x, g_input.camera.target.y);
         
         g_input.camera.zoom += get_mouse_wheel_move().y * 0.2f;
         g_input.camera.zoom = float_clamp(g_input.camera.zoom, 0.2f, 4.0f);
@@ -1407,19 +1409,27 @@ void tr_frame_update_draw(void)
 
     rb_begin(&g_rb, COLOR_BACKGROUND);
 
-    *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
-
 #if 0
     {
         const float2 m = get_mouse_position();
         const float2 mw = get_screen_to_world(m, g_input.camera);
 
-        DrawCircle((int)m.x, (int)m.y, 8.0f, RED);
-        DrawCircle((int)mw.x, (int)mw.y, 4.0f, GREEN);
+        *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
+            .position = {m.x, m.y},
+            .radius = 8.0f,
+            .color = (color_t){255, 0, 0, 255},
+        };
+        *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
+            .position = {mw.x, mw.y},
+            .radius = 4.0f,
+            .color = (color_t){0, 255, 0, 255},
+        };
 
         printf("%d %d\n", (int)m.x, (int)m.y);
     }
 #endif
+
+    *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
 
     g_input.cable_draw_count = 0;
     

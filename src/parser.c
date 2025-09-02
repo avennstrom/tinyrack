@@ -103,7 +103,7 @@ tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
 tr_token_t tr_next_token(tr_tokenizer_t* t)
 {
     tr_token_t tok = tr_next_token_internal(t);
-    printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
+    //printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
     return tok;
 }
 

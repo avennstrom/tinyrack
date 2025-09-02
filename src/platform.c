@@ -3,6 +3,11 @@
 #include <math.h>
 #include <string.h>
 
+float float_lerp(float a, float b, float t)
+{
+    return a + t*(b - a);
+}
+
 float float_remap(float value, float inputStart, float inputEnd, float outputStart, float outputEnd)
 {
     return (value - inputStart)/(inputEnd - inputStart)*(outputEnd - outputStart) + outputStart;
