@@ -1,43 +1,49 @@
 #include "platform.h"
 #include "config.h"
 
+#include "font2.h"
+
 #include <emscripten.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <float.h>
 
 #define WEBGL_LINE_STRIP 0x0003
 #define WEBGL_TRIANGLES 0x0004
 #define WEBGL_TRIANGLE_STRIP 0x0005
 
+#define SHADER_PROGRAM_COLOR 0
+#define SHADER_PROGRAM_FONT 1
+
 typedef struct vertex
 {
     float2 pos;
     uint32_t color;
+    uint32_t texcoord;
 } vertex_t;
 
 typedef struct draw
 {
     float projection[16];
+    uint32_t program;
     int topology;
     uint32_t vertex_offset;
     uint32_t vertex_count;
 } draw_t;
 
-_Static_assert(sizeof(vertex_t) == 12, "");
+_Static_assert(sizeof(vertex_t) == 16, "");
 
-static vertex_t* g_vertices = NULL;
-static draw_t* g_draws = NULL;
+static vertex_t g_vertices[1 * 1024 * 1024];
+static draw_t g_draws[64 * 1024];
 
 extern void js_init(void);
 extern void js_render(const draw_t* draws, uint32_t draw_count, const vertex_t* vertex_data, uint32_t vertex_count);
 
 void platform_init(size_t sample_rate, size_t sample_count, platform_audio_callback audio_callback)
 {
-    g_vertices = calloc(1 * 1024 * 1024, sizeof(vertex_t));
-    g_draws = calloc(64 * 1024, sizeof(draw_t));
     js_init();
 }
 
@@ -49,6 +55,10 @@ struct
     int mouse_prev_y;
     int mouse_delta_x;
     int mouse_delta_y;
+    float mouse_wheel_x;
+    float mouse_wheel_y;
+    float mouse_wheel_delta_x;
+    float mouse_wheel_delta_y;
     int mouse_buttons[2];
     int mouse_buttons_prev[2];
 } input;
@@ -93,6 +103,13 @@ void js_mousemove(int x, int y)
     input.mouse_y = y;
 }
 
+EMSCRIPTEN_KEEPALIVE
+void js_mousewheel(float x, float y)
+{
+    input.mouse_wheel_x += x;
+    input.mouse_wheel_y -= y;
+}
+
 typedef struct draw_context
 {
     vertex_t* vertices;
@@ -101,6 +118,7 @@ typedef struct draw_context
     uint32_t draw_count;
 
     int batch_topology;
+    uint32_t batch_program;
     uint32_t batch_vertex_offset;
     float batch_projection[16];
 } draw_context_t;
@@ -217,6 +235,7 @@ static void finish_batch(draw_context_t* dc)
     {
         draw->projection[i] = dc->batch_projection[i];
     }
+    draw->program = dc->batch_program;
     draw->topology = dc->batch_topology;
     draw->vertex_offset = dc->batch_vertex_offset;
     draw->vertex_count = batch_vertex_count;
@@ -224,7 +243,7 @@ static void finish_batch(draw_context_t* dc)
     dc->batch_vertex_offset = dc->vertex_count;
 }
 
-static void start_batch(draw_context_t* dc, int topology)
+static void start_batch(draw_context_t* dc, uint32_t program, int topology)
 {
     // first batch
     if (dc->batch_topology == -1)
@@ -232,15 +251,18 @@ static void start_batch(draw_context_t* dc, int topology)
         assert(dc->batch_vertex_offset == 0);
         assert(dc->draw_count == 0);
         dc->batch_topology = topology;
+        dc->batch_program = program;
         return;
     }
 
     if (dc->batch_topology != topology || 
+        dc->batch_program != program ||
         topology == WEBGL_TRIANGLE_STRIP ||
         topology == WEBGL_LINE_STRIP)
     {
         finish_batch(dc);
         dc->batch_topology = topology;
+        dc->batch_program = program;
     }
 }
 
@@ -265,7 +287,7 @@ static void append_quad(draw_context_t* dc, float2 a, float2 b, float2 c, float2
 
 static void draw_circle_arc(draw_context_t* dc, float2 pos, float radius, float a00, float a11, int N, uint32_t color)
 {
-    start_batch(dc, WEBGL_TRIANGLES);
+    start_batch(dc, SHADER_PROGRAM_COLOR, WEBGL_TRIANGLES);
 
     for (int i = 0; i < N; ++i)
     {
@@ -286,7 +308,7 @@ static void draw_rectangle_rounded(draw_context_t* dc, float2 pos, float2 size, 
     const float radius = (size.x > size.y)? (size.y*roundness)/2 : (size.x*roundness)/2;
     if (radius <= 0.0f) return;
 
-    start_batch(dc, WEBGL_TRIANGLES);
+    start_batch(dc, SHADER_PROGRAM_COLOR, WEBGL_TRIANGLES);
     
     // center rect
     const float2 c00 = {pos.x + radius, pos.y + radius};
@@ -333,7 +355,7 @@ float2 rotate(float2 v, float angle)
 
 static void draw_rectangle_rotated(draw_context_t* dc, float2 pos, float2 size, float2 origin, float angle, uint32_t color)
 {
-    start_batch(dc, WEBGL_TRIANGLES);
+    start_batch(dc, SHADER_PROGRAM_COLOR, WEBGL_TRIANGLES);
 
     const float2 o00 = {-origin.x, -origin.y};
     const float2 o01 = {-origin.x, size.y - origin.y};
@@ -361,7 +383,7 @@ static void draw_rectangle_rotated(draw_context_t* dc, float2 pos, float2 size, 
 
 static void draw_circle(draw_context_t* dc, float2 pos, float radius, uint32_t color)
 {
-    start_batch(dc, WEBGL_TRIANGLES);
+    start_batch(dc, SHADER_PROGRAM_COLOR, WEBGL_TRIANGLES);
 
     const int N = 16;
     for (int i = 0; i < N; ++i)
@@ -379,7 +401,7 @@ static void draw_circle(draw_context_t* dc, float2 pos, float radius, uint32_t c
 
 static void draw_spline_segment_bezier_quadratic(draw_context_t* dc, float2 p1, float2 c2, float2 p3, float thick, uint32_t color)
 {
-    start_batch(dc, WEBGL_TRIANGLE_STRIP);
+    start_batch(dc, SHADER_PROGRAM_COLOR, WEBGL_TRIANGLE_STRIP);
 
 #define SPLINE_SEGMENT_DIVISIONS 16
     const float step = 1.0f/SPLINE_SEGMENT_DIVISIONS;
@@ -431,11 +453,69 @@ static void draw_spline_segment_bezier_quadratic(draw_context_t* dc, float2 p1, 
 
 static void draw_line_strip(draw_context_t* dc, const float2* vertices, size_t vertex_count, uint32_t color)
 {
-    start_batch(dc, WEBGL_LINE_STRIP);
+    start_batch(dc, SHADER_PROGRAM_COLOR, WEBGL_LINE_STRIP);
 
     for (size_t i = 0; i < vertex_count; ++i)
     {
         dc->vertices[dc->vertex_count++] = (vertex_t){vertices[i], color};
+    }
+}
+
+static const float g_font_advance = 0.59999999999999998f; // monospace pog
+
+static void draw_text(draw_context_t* dc, const char* text, float2 position, float charsize, uint32_t color)
+{
+    start_batch(dc, SHADER_PROGRAM_FONT, WEBGL_TRIANGLES);
+
+    const size_t len = strlen(text);
+
+    float2 cursor = position;
+    cursor.y += charsize;
+
+    for (size_t i = 0; i < len; ++i)
+    {
+        const char c = text[i];
+        assert(c >= 0 && c < tr_countof(g_font_glyphs));
+        const struct font_glyph* glyph = &g_font_glyphs[c];
+
+        if (glyph->atlas_left == 0 && 
+            glyph->atlas_right == 0 &&
+            glyph->atlas_top == 0 &&
+            glyph->atlas_bottom == 0)
+        {
+            cursor.x += g_font_advance * charsize;
+            continue;
+        }
+
+        const float pl = glyph->plane_left * charsize;
+        const float pr = glyph->plane_right * charsize;
+        const float pt = glyph->plane_top * charsize;
+        const float pb = glyph->plane_bottom * charsize;
+
+        const float2 v00 = {cursor.x + pl, cursor.y - pt};
+        const float2 v01 = {cursor.x + pl, cursor.y - pb};
+        const float2 v10 = {cursor.x + pr, cursor.y - pt};
+        const float2 v11 = {cursor.x + pr, cursor.y - pb};
+
+        uint32_t l = glyph->atlas_left;
+        uint32_t r = glyph->atlas_right;
+        uint32_t t = glyph->atlas_top;
+        uint32_t b = glyph->atlas_bottom;
+        
+        const uint32_t uv00 = l | (t << 16u);
+        const uint32_t uv01 = l | (b << 16u);
+        const uint32_t uv10 = r | (t << 16u);
+        const uint32_t uv11 = r | (b << 16u);
+
+        dc->vertices[dc->vertex_count++] = (vertex_t){v00, color, uv00};
+        dc->vertices[dc->vertex_count++] = (vertex_t){v01, color, uv01};
+        dc->vertices[dc->vertex_count++] = (vertex_t){v10, color, uv10};
+
+        dc->vertices[dc->vertex_count++] = (vertex_t){v10, color, uv10};
+        dc->vertices[dc->vertex_count++] = (vertex_t){v01, color, uv01};
+        dc->vertices[dc->vertex_count++] = (vertex_t){v11, color, uv11};
+
+        cursor.x += g_font_advance * charsize;
     }
 }
 
@@ -497,7 +577,7 @@ void platform_render(const render_buffer_t* rb)
                 cmd_draw_text_t* cmd = (cmd_draw_text_t*)ptr;
                 ptr += sizeof(cmd_draw_text_t);
                 ptr += cmd->text_len;
-                //DrawTextEx(g_font, cmd->text, *(Vector2*)&cmd->position, cmd->font_size, 0.0f, *(Color*)&cmd->color);
+                draw_text(&dc, cmd->text, cmd->position, cmd->font_size, *(uint32_t*)&cmd->color);
                 break;
             }
             case CMD_DRAW_SPLINE:
@@ -526,6 +606,10 @@ void platform_render(const render_buffer_t* rb)
     input.mouse_delta_y = input.mouse_y - input.mouse_prev_y;
     input.mouse_prev_x = input.mouse_x;
     input.mouse_prev_y = input.mouse_y;
+    input.mouse_wheel_delta_x = float_clamp(input.mouse_wheel_x, -1.0f, 1.0f);
+    input.mouse_wheel_delta_y = float_clamp(input.mouse_wheel_y, -1.0f, 1.0f);
+    input.mouse_wheel_x = 0.0f;
+    input.mouse_wheel_y = 0.0f;
     input.mouse_buttons_prev[0] = input.mouse_buttons[0];
     input.mouse_buttons_prev[1] = input.mouse_buttons[1];
 }
@@ -538,8 +622,8 @@ float2 get_screen_size(void)
 float2 get_screen_to_world(float2 position, camera_t camera)
 {
     float2 w;
-    w.x = position.x + camera.target.x - camera.offset.x;
-    w.y = position.y + camera.target.y - camera.offset.y;
+    w.x = (position.x - camera.offset.x) / camera.zoom + camera.target.x;
+    w.y = (position.y - camera.offset.y) / camera.zoom + camera.target.y;
     return w;
 }
 
@@ -548,9 +632,18 @@ float2 get_mouse_position(void)
     return (float2){(float)input.mouse_x, (float)input.mouse_y};
 }
 
-float2 measure_text(font_t font, const char *text, float fontSize, float spacing)
+float2 measure_text(font_t font, const char *text, float font_size, float spacing)
 {
-    return (float2){0.0f, 0.0f};
+    const size_t len = strlen(text);
+
+    float w = 0.0f;
+
+    for (size_t i = 0; i < len; ++i)
+    {
+        w += g_font_advance * font_size;
+    }
+
+    return (float2){w, font_size};
 }
 
 // input
@@ -589,5 +682,5 @@ float2 get_mouse_delta(void)
 
 float2 get_mouse_wheel_move(void)
 {
-    return (float2){0.0f, 0.0f};
+    return (float2){input.mouse_wheel_delta_x, input.mouse_wheel_delta_y};
 }

@@ -73,7 +73,7 @@ static void* tr_module_pool_get(const tr_module_pool_t* pool, size_t index)
 
 typedef struct tr_gui_module
 {
-    int x, y;
+    float x, y;
     enum tr_module_type type;
     void* data; // pointer to the real module data (tr_vco_t, tr_clock_t, etc...) based on type
 } tr_gui_module_t;
@@ -82,7 +82,7 @@ typedef struct tr_gui_module
 
 typedef struct tr_output_plug
 {
-    int x, y;
+    float x, y;
     const tr_gui_module_t* module;
 } tr_output_plug_t;
 
@@ -112,7 +112,8 @@ typedef struct rack
     tr_input_plug_kv_t* input_plugs;
 } rack_t;
 
-static render_buffer_t g_rb;
+static uint8_t g_rb_memory[1024 * 1024];
+static render_buffer_t g_rb = {g_rb_memory};
 
 static void draw_rectangle_rounded(rectangle_t rec, float roundness, color_t color)
 {
@@ -451,7 +452,7 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
         const tr_gui_module_t* module = &rack->gui_modules[i];
         const char* name = tr_module_infos[module->type].id;
         
-        ctx.pos += sprintf(out + ctx.pos, "module %s %zu pos %d %d\n", name, i, module->x, module->y);
+        ctx.pos += sprintf(out + ctx.pos, "module %s %zu pos %.0f %.0f\n", name, i, module->x, module->y);
         
         const void* module_addr = module->data;
         
@@ -574,8 +575,8 @@ void tr_gui_module_begin(tr_gui_module_t* module)
 
     if (g_input.drag_module == module)
     {
-        module->x = (int)(g_input.drag_offset.x + mouse.x);
-        module->y = (int)(g_input.drag_offset.y + mouse.y);
+        module->x = g_input.drag_offset.x + mouse.x;
+        module->y = g_input.drag_offset.y + mouse.y;
     }
 
     rectangle_t bgrect = {(float)module->x, (float)module->y, (float)module_info->width, (float)module_info->height};
@@ -620,10 +621,10 @@ void tr_gui_module_end(void)
 {
 }
 
-void tr_gui_knob_base(float value, float min, float max, int x, int y, bool highlight)
+void tr_gui_knob_base(float value, float min, float max, float x, float y, bool highlight)
 {
     *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
-        .position = {(float)x, (float)y},
+        .position = {x, y},
         .radius = TR_KNOB_RADIUS,
         .color = highlight ? COLOR_PLUG_HIGHLIGHT : COLOR_KNOB,
     };
@@ -633,7 +634,7 @@ void tr_gui_knob_base(float value, float min, float max, int x, int y, bool high
     const float angle = t0 * TR_TWOPI;
 
     *rb_draw_rectangle(&g_rb) = (cmd_draw_rectangle_t){
-        .position = {(float)x, (float)y},
+        .position = {x, y},
         .size = {TR_KNOB_TIP_WIDTH, TR_KNOB_RADIUS * TR_KNOB_TIP_SIZE},
         .origin = {TR_KNOB_TIP_WIDTH * 0.5f, TR_KNOB_RADIUS},
         .rotation = angle,
@@ -645,8 +646,8 @@ void tr_gui_knob_float(const tr_gui_module_t* module, size_t field_index)
 {
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     const tr_module_field_info_t* field_info = &module_info->fields[field_index];
-    const int x = module->x + field_info->x;
-    const int y = module->y + field_info->y;
+    const float x = module->x + field_info->x;
+    const float y = module->y + field_info->y;
 
     float* value = get_field_address(module, field_index);
     const float min = field_info->min;
@@ -696,8 +697,8 @@ void tr_gui_knob_int(const tr_gui_module_t* module, size_t field_index)
 {
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     const tr_module_field_info_t* field_info = &module_info->fields[field_index];
-    const int x = module->x + field_info->x;
-    const int y = module->y + field_info->y;
+    const float x = module->x + field_info->x;
+    const float y = module->y + field_info->y;
     int* value = get_field_address(module, field_index);
     
     bool highlight = false;
@@ -753,8 +754,8 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, size_
 {
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     const tr_module_field_info_t* field_info = &module_info->fields[field_index];
-    const int x = module->x + field_info->x;
-    const int y = module->y + field_info->y;
+    const float x = module->x + field_info->x;
+    const float y = module->y + field_info->y;
     const float2 center = {(float)x, (float)y};
 
     const float** value = get_field_address(module, field_index);
@@ -811,8 +812,8 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, size
 {
     const tr_module_info_t* module_info = &tr_module_infos[module->type];
     const tr_module_field_info_t* field_info = &module_info->fields[field_index];
-    const int x = module->x + field_info->x;
-    const int y = module->y + field_info->y;
+    const float x = module->x + field_info->x;
+    const float y = module->y + field_info->y;
     const bool dim = g_input.drag_output != NULL;
 
     bool highlight = false;
@@ -863,10 +864,10 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, size
     hmput(rack->output_plugs, buffer, plug);
 }
 
-void tr_led(int x, int y, color_t color)
+void tr_led(float x, float y, color_t color)
 {
     *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
-        .position = {(float)x, (float)y},
+        .position = {x, y},
         .radius = 4.0f,
         .color = color,
     };
@@ -874,8 +875,8 @@ void tr_led(int x, int y, color_t color)
 
 void tr_clock_decorate(tr_clock_t* clock, tr_gui_module_t* module)
 {
-    const int gate_x = module->x + tr_clock__fields[TR_CLOCK_out_gate].x;
-    const int gate_y = module->y + tr_clock__fields[TR_CLOCK_out_gate].y;
+    const float gate_x = module->x + tr_clock__fields[TR_CLOCK_out_gate].x;
+    const float gate_y = module->y + tr_clock__fields[TR_CLOCK_out_gate].y;
     tr_led(gate_x, gate_y + TR_PLUG_RADIUS + 12, clock->phase < 0.5f ? COLOR_LED_ON : COLOR_LED_OFF);
 }
 
@@ -883,8 +884,8 @@ void tr_clockdiv_decorate(tr_clockdiv_t* clockdiv, tr_gui_module_t* module)
 {
     for (int i = 0; i < 8; ++i)
     {
-        const int plug_x = module->x + tr_clockdiv__fields[TR_CLOCKDIV_out_0 + i].x;
-        const int plug_y = module->y + tr_clockdiv__fields[TR_CLOCKDIV_out_0 + i].y;
+        const float plug_x = module->x + tr_clockdiv__fields[TR_CLOCKDIV_out_0 + i].x;
+        const float plug_y = module->y + tr_clockdiv__fields[TR_CLOCKDIV_out_0 + i].y;
         tr_led(plug_x, plug_y + TR_PLUG_RADIUS + 12, (clockdiv->state >> i) & 1 ? COLOR_LED_ON : COLOR_LED_OFF);
     }
 }
@@ -900,21 +901,21 @@ void tr_seq8_decorate(tr_seq8_t* seq8, tr_gui_module_t* module)
 
 void tr_quantizer_decorate(tr_quantizer_t* quantizer, tr_gui_module_t* module)
 {
-    const int x = module->x;
-    const int y = module->y;
-    const int kx = x + 24;
-    draw_text(FONT_BERKELY_MONO, g_tr_quantizer_mode_name[quantizer->in_mode], (float2){(float)kx + TR_KNOB_RADIUS + 8, (float)y + 40}, 20, 0, COLOR_MODULE_TEXT);
+    const float x = module->x;
+    const float y = module->y;
+    const float kx = x + 24.0f;
+    draw_text(FONT_BERKELY_MONO, g_tr_quantizer_mode_name[quantizer->in_mode], (float2){kx + TR_KNOB_RADIUS + 8, y + 40}, 20, 0, COLOR_MODULE_TEXT);
 }
 
 void tr_scope_decorate(tr_scope_t* scope, tr_gui_module_t* module)
 {
-    const int screen_x = module->x + 8;
-    const int screen_y = module->y + 28;
-    const int screen_w = 200 - 8*2;
-    const int screen_h = 140;
+    const float screen_x = module->x + 8;
+    const float screen_y = module->y + 28;
+    const float screen_w = 200 - 8*2;
+    const float screen_h = 140;
     *rb_draw_rectangle(&g_rb) = (cmd_draw_rectangle_t){
-        .position = {(float)screen_x, (float)screen_y},
-        .size = {(float)screen_w, (float)screen_h},
+        .position = {screen_x, screen_y},
+        .size = {screen_w, screen_h},
         .color = {0, 0, 0, 255},
     }; 
 
@@ -1314,6 +1315,8 @@ void tr_draw_cable(float2 a, float2 b, float slack, float thick, color_t color)
     cmd->color = color;
 }
 
+static char g_serialization_buffer[1024 * 1024];
+
 void tr_frame_update_draw(void)
 {
     app_t* app = &g_app;
@@ -1335,8 +1338,6 @@ void tr_frame_update_draw(void)
             g_input.camera.target.x -= get_mouse_delta().x / g_input.camera.zoom;
             g_input.camera.target.y -= get_mouse_delta().y / g_input.camera.zoom;
         }
-
-        printf("%f %f\n", g_input.camera.target.x, g_input.camera.target.y);
         
         g_input.camera.zoom += get_mouse_wheel_move().y * 0.2f;
         g_input.camera.zoom = float_clamp(g_input.camera.zoom, 0.2f, 4.0f);
@@ -1344,7 +1345,7 @@ void tr_frame_update_draw(void)
 
     if (is_key_down(PL_KEY_LEFT_CONTROL) && is_key_pressed(PL_KEY_S))
     {
-        char* buffer = malloc(1024 * 1024);
+        char* buffer = g_serialization_buffer;
         size_t len = tr_rack_serialize(buffer, rack);
         printf("%.*s", (int)len, buffer);
         free(buffer);
@@ -1409,27 +1410,27 @@ void tr_frame_update_draw(void)
 
     rb_begin(&g_rb, COLOR_BACKGROUND);
 
-#if 0
+    *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
+
+#if 1
     {
         const float2 m = get_mouse_position();
         const float2 mw = get_screen_to_world(m, g_input.camera);
 
-        *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
-            .position = {m.x, m.y},
-            .radius = 8.0f,
-            .color = (color_t){255, 0, 0, 255},
-        };
+        // *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
+        //     .position = {m.x, m.y},
+        //     .radius = 8.0f,
+        //     .color = (color_t){255, 0, 0, 255},
+        // };
         *rb_draw_circle(&g_rb) = (cmd_draw_circle_t){
             .position = {mw.x, mw.y},
             .radius = 4.0f,
             .color = (color_t){0, 255, 0, 255},
         };
 
-        printf("%d %d\n", (int)m.x, (int)m.y);
+        //printf("%d %d\n", (int)m.x, (int)m.y);
     }
 #endif
-
-    *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
 
     g_input.cable_draw_count = 0;
     
@@ -1817,8 +1818,6 @@ input_buffer in_cv > seq8 21 out_cv";
 
 int main()
 {
-    g_rb.data = malloc(1024 * 1024);
-
     app_t* app = &g_app;
     rack_t* rack = &app->rack;
 

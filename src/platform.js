@@ -4,11 +4,27 @@ mergeInto(LibraryManager.library, {
         let canvas = document.getElementById('canvas');
         let gl = canvas.getContext("webgl2", {antialias: true});
 
+        const image = new Image();
+        image.src = "font.png";  // your PNG path
+        image.onload = () => {
+            const tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // Flip Y so the texture coords (0,0) start at bottom-left
+
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            this.font_texture = tex;
+        }
+
         this.vertex_buffer = gl.createBuffer();
         this.vao = gl.createVertexArray();
         
-        // --- Shaders ---
-        const vsSrc = `#version 300 es
+        const vs_color = `#version 300 es
         uniform mat4 uView;
         uniform mat4 uProjection;
         layout(location=0) in vec2 aPos;
@@ -20,12 +36,72 @@ mergeInto(LibraryManager.library, {
         }
         `;
 
-        const fsSrc = `#version 300 es
+        const fs_color = `#version 300 es
         precision mediump float;
         in vec4 vColor;
         out vec4 fragColor;
         void main() {
             fragColor = vColor;
+        }
+        `;
+
+        const vs_font = `#version 300 es
+        uniform mat4 uView;
+        uniform mat4 uProjection;
+        layout(location=0) in vec2 aPos;
+        layout(location=1) in vec4 aColor;
+        layout(location=2) in uint aTexcoord;
+        out vec4 vColor;
+        out vec2 vTexcoord;
+        void main() {
+            gl_Position = uProjection * uView * vec4(aPos, 0.0, 1.0);
+            vColor = aColor;
+            uint u = aTexcoord & 0xffffu;
+            uint v = aTexcoord >> 16u;
+            vTexcoord = vec2(u, v);
+        }
+        `;
+
+        const fs_font = `#version 300 es
+        precision mediump float;
+        uniform sampler2D uFont;
+        in vec4 vColor;
+        in vec2 vTexcoord;
+        out vec4 fragColor;
+
+        vec3 hash3(uint x) {
+            x ^= x >> 16u;
+            x *= 0x7feb352du;
+            x ^= x >> 15u;
+            x *= 0x846ca68bu;
+            x ^= x >> 16u;
+            return vec3(
+                float((x * 0x68bc21ebu) & 0x00ffffffu),
+                float((x * 0x02e5be93u) & 0x00ffffffu),
+                float((x * 0x967a889bu) & 0x00ffffffu)
+            ) / float(0x01000000u);
+        }
+
+        float median(float r, float g, float b) {
+            return max(min(r, g), min(max(r, g), b));
+        }
+
+        void main() {
+            //fragColor.rgb = hash3(uint(vTexcoord.x) | (uint(vTexcoord.y) << 16u));
+
+            vec2 uv = (vTexcoord + 0.5) * (1.0 / 208.0);
+            vec3 msdf = texture(uFont, uv).rgb;
+            //fragColor.rg = uv;
+            //fragColor.b = 0.0;
+            //fragColor = vec4(msdf, 1);
+
+            float sd = median(msdf.r, msdf.g, msdf.b);
+
+            // Map signed distance to alpha (0.5 = edge)
+            float w = fwidth(sd);  // screen-space smoothing
+            float alpha = smoothstep(0.5 - w, 0.5 + w, sd);
+
+            fragColor = vec4(vColor.rgb, vColor.a * alpha);
         }
         `;
 
@@ -40,10 +116,18 @@ mergeInto(LibraryManager.library, {
             return s;
         }
 
-        const prog = gl.createProgram();
-        gl.attachShader(prog, compile(vsSrc, gl.VERTEX_SHADER));
-        gl.attachShader(prog, compile(fsSrc, gl.FRAGMENT_SHADER));
-        gl.linkProgram(prog);
+        function create_program(vs_src, fs_src)
+        {
+            const program = gl.createProgram();
+            gl.attachShader(program, compile(vs_src, gl.VERTEX_SHADER));
+            gl.attachShader(program, compile(fs_src, gl.FRAGMENT_SHADER));
+            gl.linkProgram(program);
+            return {
+                program,
+                u_view: gl.getUniformLocation(program, "uView"),
+                u_projection: gl.getUniformLocation(program, "uProjection"),
+            };
+        }
 
         window.addEventListener('mousedown', (ev) => {
             Module._js_mousedown(ev.button);
@@ -60,8 +144,15 @@ mergeInto(LibraryManager.library, {
         window.addEventListener('keyup', (ev) => {
             console.log('up: ' + ev.key);
         });
+        window.addEventListener('wheel', (ev) => {
+            console.log('wheel: ' + ev.deltaY);
+            Module._js_mousewheel(ev.deltaX, ev.deltaY);
+        });
         
-        this.prog = prog;
+        this.programs = [
+            create_program(vs_color, fs_color),
+            create_program(vs_font, fs_font),
+        ];
         this.canvas = canvas;
         this.gl = gl;
     },
@@ -71,7 +162,7 @@ mergeInto(LibraryManager.library, {
         /** @type {WebGL2RenderingContext} */
         const gl = this.gl;
 
-        const vertex_stride = 12;
+        const vertex_stride = 16;
         const vertex_data = new Uint8Array(wasmMemory.buffer, vertex_data_ptr, vertex_count * vertex_stride);
 
         gl.bindVertexArray(this.vao);
@@ -83,6 +174,14 @@ mergeInto(LibraryManager.library, {
         gl.vertexAttribPointer(0, 2, gl.FLOAT, false, vertex_stride, 0);
         gl.enableVertexAttribArray(1);
         gl.vertexAttribPointer(1, 4, gl.UNSIGNED_BYTE, true, vertex_stride, 8);
+        gl.enableVertexAttribArray(2);
+        gl.vertexAttribIPointer(2, 1, gl.UNSIGNED_INT, vertex_stride, 12);
+
+        gl.activeTexture(gl.TEXTURE0);
+        if (this.font_texture !== undefined)
+        {
+            gl.bindTexture(gl.TEXTURE_2D, this.font_texture);
+        }
 
         const W = canvas.width;
         const H = canvas.height;
@@ -93,28 +192,47 @@ mergeInto(LibraryManager.library, {
             -1,      1,      0, 1
         ]);
 
-        gl.useProgram(this.prog);
-
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(60 / 255, 83 / 255, 119 / 255, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         const dv = new DataView(HEAPU8.buffer);
 
-        const u_view = gl.getUniformLocation(this.prog, "uView");
-        const u_projection = gl.getUniformLocation(this.prog, "uProjection");
-
-        gl.uniformMatrix4fv(u_projection, false, proj);
+        let current_program = -1;
 
         for (let i = 0; i < draw_count; ++i)
         {
-            const draw_base_ptr = draw_ptr + i * (64+12);
+            const draw_base_ptr = draw_ptr + i * (64+16);
             const view = new Float32Array(wasmMemory.buffer, draw_base_ptr, 16);
-            gl.uniformMatrix4fv(u_view, true, view);
-            const topology = dv.getInt32(draw_base_ptr + 64, true);
-            const vertex_offset = dv.getUint32(draw_base_ptr + 64 + 4, true);
-            const vertex_count = dv.getUint32(draw_base_ptr + 64 + 8, true);
+            const program_index = dv.getInt32(draw_base_ptr + 64, true);
+            const topology = dv.getInt32(draw_base_ptr + 64 + 4, true);
+            const vertex_offset = dv.getUint32(draw_base_ptr + 64 + 8, true);
+            const vertex_count = dv.getUint32(draw_base_ptr + 64 + 12, true);
             //console.log({topology, vertex_offset, vertex_count});
+
+            const program = this.programs[program_index];
+
+            if (current_program != program_index)
+            {
+                current_program = program_index;
+                gl.useProgram(program.program);
+                gl.uniformMatrix4fv(program.u_projection, false, proj);
+
+                if (program_index === 1)
+                {
+                    const u_font = gl.getUniformLocation(program.program, "uFont");
+                    gl.uniform1i(u_font, 0);
+                    gl.enable(gl.BLEND);
+                    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                }
+                else
+                {
+                    gl.disable(gl.BLEND);
+                }
+            }
+
+            gl.uniformMatrix4fv(program.u_view, true, view);
+            
             gl.drawArrays(topology, vertex_offset, vertex_count);
         }
     },
