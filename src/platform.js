@@ -1,8 +1,25 @@
 mergeInto(LibraryManager.library, {
+    js_set_cursor: function(cursor) {
+        let canvas = document.getElementById('canvas');
+        let style = 'pointer';
+        switch (cursor) {
+            case 0: style = 'default'; break;
+            case 1: style = 'pointer'; break;
+            case 2: style = 'crosshair'; break;
+            case 3: style = 'arrow'; break;
+            case 4: style = 'grab'; break;
+            case 5: style = 'grabbing'; break;
+            case 6: style = 'no-drop'; break;
+            case 7: style = 'move'; break;
+        }
+        canvas.style.cursor = style;
+    },
     js_init: function() {
         /** @type {HTMLCanvasElement} */
         let canvas = document.getElementById('canvas');
         let gl = canvas.getContext("webgl2", {antialias: true});
+
+        canvas.style.cursor = "grab";
 
         const image = new Image();
         image.src = "font.png";  // your PNG path
@@ -105,7 +122,6 @@ mergeInto(LibraryManager.library, {
         }
         `;
 
-        // --- Compile/Link ---
         function compile(src, type) {
             const s = gl.createShader(type);
             gl.shaderSource(s, src);
@@ -131,6 +147,7 @@ mergeInto(LibraryManager.library, {
 
         window.addEventListener('mousedown', (ev) => {
             Module._js_mousedown(ev.button);
+            this.ctx.resume();
         });
         window.addEventListener('mouseup', (ev) => {
             Module._js_mouseup(ev.button);
@@ -139,10 +156,10 @@ mergeInto(LibraryManager.library, {
             Module._js_mousemove(ev.clientX, ev.clientY);
         });
         window.addEventListener('keydown', (ev) => {
-            console.log('down: ' + ev.key);
+            //console.log('down: ' + ev.key);
         });
         window.addEventListener('keyup', (ev) => {
-            console.log('up: ' + ev.key);
+            //console.log('up: ' + ev.key);
         });
         window.addEventListener('wheel', (ev) => {
             console.log('wheel: ' + ev.deltaY);
@@ -155,6 +172,42 @@ mergeInto(LibraryManager.library, {
         ];
         this.canvas = canvas;
         this.gl = gl;
+        
+        (async () => {
+            const ctx = new AudioContext({sampleRate: 48000});
+            await ctx.audioWorklet.addModule("audio-processor.js");
+            
+            const audio_blocksize = 128;
+            const audio_bufcount = 8; // how many 128-sample blocks to buffer
+            const node = new AudioWorkletNode(ctx, "rack", {
+                processorOptions: {
+                    pcm_sab: new SharedArrayBuffer(4 * audio_blocksize * audio_bufcount),
+                    bufcount: audio_bufcount,
+                },
+            });
+            node.connect(ctx.destination);
+
+            const pcm_ptr = Module._my_malloc(4 * audio_blocksize);
+            const pcm = new Float32Array(wasmMemory.buffer, pcm_ptr, audio_blocksize);
+
+            //let phase = 0.0;
+            node.port.onmessage = (event) => {
+                //console.log(pcm_buf);
+                const pcm_buf = event.data;
+                // const pd = (440.0 * Math.PI) / 48000.0;
+                // for (let i = 0; i < pcm_buf.length; ++i)
+                // {
+                //     pcm_buf[i] = Math.sin(phase);
+                //     phase += pd;
+                // }
+                
+                Module._tr_audio_callback(pcm_ptr, audio_blocksize);
+                pcm_buf.set(pcm);
+            };
+
+            ctx.resume();
+            this.ctx = ctx;
+        })();
     },
     js_render: function(draw_ptr, draw_count, vertex_data_ptr, vertex_count) {
         /** @type {HTMLCanvasElement} */

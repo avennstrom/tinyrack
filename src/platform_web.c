@@ -41,6 +41,7 @@ static draw_t g_draws[64 * 1024];
 
 extern void js_init(void);
 extern void js_render(const draw_t* draws, uint32_t draw_count, const vertex_t* vertex_data, uint32_t vertex_count);
+extern void js_set_cursor(int cursor);
 
 void platform_init(size_t sample_rate, size_t sample_count, platform_audio_callback audio_callback)
 {
@@ -75,6 +76,12 @@ mouse_button_t js_mouse_button(int js_button)
 
 static int canvas_w = 240;
 static int canvas_h = 240;
+
+EMSCRIPTEN_KEEPALIVE
+void* my_malloc(size_t size)
+{
+    return malloc(size);
+}
 
 EMSCRIPTEN_KEEPALIVE
 void js_canvas_size(int w, int h)
@@ -644,6 +651,11 @@ float2 measure_text(font_t font, const char *text, float font_size, float spacin
     }
 
     return (float2){w, font_size};
+}
+
+void platform_set_cursor(cursor_t cursor)
+{
+    js_set_cursor(cursor);
 }
 
 // input

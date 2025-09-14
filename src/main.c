@@ -14,8 +14,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
-#include <memory.h>
 #include <stdio.h>
 #include <math.h>
 #include <assert.h>
@@ -102,6 +100,15 @@ typedef struct tr_input_plug_kv
     const float** key;
     tr_input_plug_t value;
 } tr_input_plug_kv_t;
+
+typedef struct tr_plugmap
+{
+    uint64_t keys[64 * 1024];
+} tr_plugmap_t;
+
+
+
+tr_plugmap_t g_plugmap;
 
 typedef struct rack
 {
@@ -359,7 +366,7 @@ typedef struct app
     size_t recording_offset;
 #endif
 
-    int16_t final_mix[TR_SAMPLE_COUNT];
+    float final_mix[TR_SAMPLE_COUNT];
     size_t final_mix_remaining;
     bool has_audio_callback_been_called_once;
 
@@ -368,6 +375,7 @@ typedef struct app
     bool single_step;
     float fadein;
 
+    timer_buffer_t tb_resolve_module_graph;
     timer_buffer_t tb_produce_final_mix;
     timer_buffer_t tb_frame_update_draw;
     timer_buffer_t tb_draw_modules;
@@ -1065,6 +1073,8 @@ size_t tr_collect_leaf_modules(rack_t* rack, const tr_gui_module_t* leaf_modules
 
 size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
 {
+    tb_start(&g_app.tb_resolve_module_graph);
+
     const tr_gui_module_t* leaf_modules[TR_GUI_MODULE_COUNT];
     const size_t leaf_count = tr_collect_leaf_modules(rack, leaf_modules);
 
@@ -1166,17 +1176,18 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
         update_modules[update_count++] = &rack->gui_modules[sort_data[i].module_index];
     }
 
+    tb_stop(&g_app.tb_resolve_module_graph);
     return update_count;
 }
 
-static void float_to_int16_pcm(int16_t* samples, const float* buffer)
-{
-    assert(buffer != NULL);
-    for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
-    {
-        samples[i] = (int16_t)(float_clamp(buffer[i], -1.0f, 1.0f) * INT16_MAX);
-    }
-}
+// static void float_to_int16_pcm(int16_t* samples, const float* buffer)
+// {
+//     assert(buffer != NULL);
+//     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
+//     {
+//         samples[i] = (int16_t)(float_clamp(buffer[i], -1.0f, 1.0f) * INT16_MAX);
+//     }
+// }
 
 static const tr_speaker_t* tr_find_speaker(rack_t* rack)
 {
@@ -1203,7 +1214,7 @@ static const tr_speaker_t* tr_find_speaker(rack_t* rack)
     return speaker;
 }
 
-static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
+static void tr_produce_final_mix_internal(float* output, rack_t* rack)
 {
     tr_gui_module_t* update_modules[TR_GUI_MODULE_COUNT];
     const size_t update_count = tr_resolve_module_graph(update_modules, rack);
@@ -1212,23 +1223,25 @@ static void tr_produce_final_mix_internal(int16_t* output, rack_t* rack)
     const tr_speaker_t* speaker = tr_find_speaker(rack);
     if (speaker == NULL)
     {
-        memset(output, 0, sizeof(int16_t) * TR_SAMPLE_COUNT);
+        memset(output, 0, sizeof(float) * TR_SAMPLE_COUNT);
         return;
     }
 
-    float_to_int16_pcm(output, speaker->in_audio);
+    //float_to_int16_pcm(output, speaker->in_audio);
+    memcpy(output, speaker->in_audio, sizeof(float) * TR_SAMPLE_COUNT);
 }
 
-void tr_produce_final_mix(int16_t* output, rack_t* rack)
+void tr_produce_final_mix(float* output, rack_t* rack)
 {
     tb_start(&g_app.tb_produce_final_mix);
     tr_produce_final_mix_internal(output, rack);
     tb_stop(&g_app.tb_produce_final_mix);
 }
 
-void tr_audio_callback(int16_t *bufferData, size_t frames)
+EMSCRIPTEN_KEEPALIVE
+void tr_audio_callback(void* bufferData, size_t frames)
 {
-    int16_t* samples = bufferData;
+    float* samples = bufferData;
     size_t write_cursor = 0;
 
     //printf("frames: %d\n", frames);
@@ -1252,7 +1265,7 @@ void tr_audio_callback(int16_t *bufferData, size_t frames)
 
         //printf("write_cursor: %zu, final_mix_cursor: %zu, final_mix_available: %zu\n", write_cursor, final_mix_cursor, final_mix_available);
         
-        memcpy(samples + write_cursor, g_app.final_mix + final_mix_cursor, final_mix_available * sizeof(int16_t));
+        memcpy(samples + write_cursor, g_app.final_mix + final_mix_cursor, final_mix_available * sizeof(float));
 
         write_cursor += final_mix_available;
         g_app.final_mix_remaining -= final_mix_available;
@@ -1406,13 +1419,48 @@ void tr_frame_update_draw(void)
         }
     }
 
+    cursor_t cursor = PL_CURSOR_DEFAULT;
+
+    if (g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        cursor = PL_CURSOR_GRAB;
+    }
+
+    if (g_input.drag_output != NULL ||
+        g_input.drag_input != NULL ||
+        g_input.active_value != NULL)
+    {
+        cursor = PL_CURSOR_GRABBING;
+    }
+
+    if (g_input.drag_module != NULL)
+    {
+        cursor = PL_CURSOR_MOVE;
+    }
+
+    if (g_input.drag_output != NULL &&
+        g_input.closest_input == TR_INPUT_TYPE_OUTPUT_PLUG &&
+        g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        cursor = PL_CURSOR_NO_DROP;
+    }
+
+    if (g_input.drag_input != NULL &&
+        g_input.closest_input == TR_INPUT_TYPE_INPUT_PLUG &&
+        g_input.closest_distance[g_input.closest_input] < 0.0f)
+    {
+        cursor = PL_CURSOR_NO_DROP;
+    }
+
+    platform_set_cursor(cursor);
+
     tb_stop(&app->tb_update_input);
 
     rb_begin(&g_rb, COLOR_BACKGROUND);
 
     *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
 
-#if 1
+#if 0
     {
         const float2 m = get_mouse_position();
         const float2 mw = get_screen_to_world(m, g_input.camera);
@@ -1590,35 +1638,29 @@ void tr_frame_update_draw(void)
 #endif
 
     {
-        float avg;
-        char message[64];
-        float2 message_size;
-        float2 pos = {0.0f, get_screen_size().y};
-        const float font_size = 18.0f;
+        struct {const char* name; const timer_buffer_t* tb;} tb_draw_infos[] = {
+            {"final_mix", &g_app.tb_produce_final_mix},
+            {"module_graph", &g_app.tb_resolve_module_graph},
+            {"update_input", &g_app.tb_update_input},
+            {"draw_modules", &g_app.tb_draw_modules},
+            {"frame", &g_app.tb_frame_update_draw},
+        };
 
-        avg = tb_avg(&g_app.tb_produce_final_mix);
-        sprintf(message, "final mix: %1.3f ms", avg);
-        message_size = measure_text(FONT_BERKELY_MONO, message, font_size, 0);
-        pos.y -= message_size.y;
-        draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
-
-        avg = tb_avg(&g_app.tb_update_input);
-        sprintf(message, "update_input: %1.3f ms", avg);
-        message_size = measure_text(FONT_BERKELY_MONO, message, font_size, 0);
-        pos.y -= message_size.y;
-        draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
-
-        avg = tb_avg(&g_app.tb_draw_modules);
-        sprintf(message, "draw_modules: %1.3f ms", avg);
-        message_size = measure_text(FONT_BERKELY_MONO, message, font_size, 0);
-        pos.y -= message_size.y;
-        draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
+        const float font_size = 16.0f;
+        float2 pos = {2.0f, get_screen_size().y - 4};
         
-        avg = tb_avg(&g_app.tb_frame_update_draw);
-        sprintf(message, "frame: %1.3f ms", avg);
-        message_size = measure_text(FONT_BERKELY_MONO, message, font_size, 0);
-        pos.y -= message_size.y;
-        draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
+        for (size_t i = 0; i < tr_countof(tb_draw_infos); ++i)
+        {
+            char fmt[64];
+            char message[64];
+
+            const float avg = tb_avg(tb_draw_infos[i].tb);
+            sprintf(fmt, "%s: %%1.3f ms", tb_draw_infos[i].name);
+            sprintf(message, fmt, avg);
+            const float2 message_size = measure_text(FONT_BERKELY_MONO, message, font_size, 0);
+            pos.y -= message_size.y;
+            draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
+        }
     }
 
     {
@@ -1837,7 +1879,7 @@ int main()
     g_input.camera.target.y = bounds.y + bounds.height * 0.5f;
 #endif
 
-    platform_init(TR_SAMPLE_RATE, TR_SAMPLE_COUNT, tr_audio_callback);
+    platform_init(TR_SAMPLE_RATE, TR_SAMPLE_COUNT, NULL);
 
 #ifdef TR_RECORDING_FEATURE
     app->is_recording = false;

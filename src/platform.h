@@ -165,6 +165,20 @@ float2 get_screen_to_world(float2 position, camera_t camera);
 float2 get_mouse_position(void);
 float2 measure_text(font_t font, const char *text, float fontSize, float spacing);
 
+typedef enum cursor
+{
+    PL_CURSOR_DEFAULT,
+    PL_CURSOR_POINTER,
+    PL_CURSOR_CROSSHAIR,
+    PL_CURSOR_ARROW,
+    PL_CURSOR_GRAB,
+    PL_CURSOR_GRABBING,
+    PL_CURSOR_NO_DROP,
+    PL_CURSOR_MOVE,
+} cursor_t;
+
+void platform_set_cursor(cursor_t cursor);
+
 // input
 bool is_key_pressed(keyboard_key_t key);
 bool is_key_down(keyboard_key_t key);
