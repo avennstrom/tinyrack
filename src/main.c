@@ -13,6 +13,7 @@
 #include "platform.h"
 #include "math.h"
 #include "stdlib.h"
+#include "strbuf.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -428,24 +429,25 @@ static color_t tr_random_cable_color()
     return g_cable_colors[rand() % tr_countof(g_cable_colors)];
 }
 
-typedef struct tr_serialize_context
+void tr_serialize_input_float(tr_strbuf_t* sb, const char* name, float value)
 {
-    rack_t* rack;
-    char* out;
-    size_t pos;
-} tr_serialize_context_t;
-
-void tr_serialize_input_float(tr_serialize_context_t* ctx, const char* name, float value)
-{
-    ctx->pos += sprintf(ctx->out + ctx->pos, "input %s %f\n", name, value);
+    sb_append_cstring(sb, "input ");
+    sb_append_cstring(sb, name);
+    sb_append_cstring(sb, " ");
+    sb_append_hex_float(sb, value);
+    sb_append_cstring(sb, "\n");
 }
 
-void tr_serialize_input_int(tr_serialize_context_t* ctx, const char* name, int value)
+void tr_serialize_input_int(tr_strbuf_t* sb, const char* name, int value)
 {
-    ctx->pos += sprintf(ctx->out + ctx->pos, "input %s %d\n", name, value);
+    sb_append_cstring(sb, "input ");
+    sb_append_cstring(sb, name);
+    sb_append_cstring(sb, " ");
+    sb_append_int(sb, value);
+    sb_append_cstring(sb, "\n");
 }
 
-void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, const float** value)
+void tr_serialize_input_buffer(tr_strbuf_t* sb, const rack_t* rack, const char* name, const float** value)
 {
     const float* buffer = *value;
     if (buffer == NULL)
@@ -453,11 +455,11 @@ void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, co
         return;
     }
 
-    const int plug_idx = tr_hmget(ctx->rack->output_plugs_key, buffer);
+    const int plug_idx = tr_hmget(rack->output_plugs_key, buffer);
     assert(plug_idx != -1);
-    const tr_output_plug_t* plug = &ctx->rack->output_plugs[plug_idx];
+    const tr_output_plug_t* plug = &rack->output_plugs[plug_idx];
 
-    const size_t module_index = tr_get_gui_module_index(ctx->rack, plug->module);
+    const size_t module_index = tr_get_gui_module_index(rack, plug->module);
 
     const tr_module_info_t* module_info = &tr_module_infos[plug->module->type];
 
@@ -477,19 +479,33 @@ void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, co
     assert(field_info != NULL);
     assert(field_info->type == TR_MODULE_FIELD_BUFFER);
 
-    ctx->pos += sprintf(ctx->out + ctx->pos, "input_buffer %s > %s %zu %s\n", name, module_info->id, module_index, field_info->name);
+    sb_append_cstring(sb, "input_buffer ");
+    sb_append_cstring(sb, name);
+    sb_append_cstring(sb, " > ");
+    sb_append_cstring(sb, module_info->id);
+    sb_append_cstring(sb, " ");
+    sb_append_int(sb, (int)module_index);
+    sb_append_cstring(sb, " ");
+    sb_append_cstring(sb, field_info->name);
+    sb_append_cstring(sb, "\n");
 }
 
-size_t tr_rack_serialize(char* out, rack_t* rack)
+int tr_rack_serialize(tr_strbuf_t* sb, rack_t* rack)
 {
-    tr_serialize_context_t ctx = {rack, out};
-    
     for (size_t i = 0; i < rack->gui_module_count; ++i)
     {
         const tr_gui_module_t* module = &rack->gui_modules[i];
         const char* name = tr_module_infos[module->type].id;
         
-        ctx.pos += sprintf(out + ctx.pos, "module %s %zu pos %.0f %.0f\n", name, i, module->x, module->y);
+        sb_append_cstring(sb, "module ");
+        sb_append_cstring(sb, name);
+        sb_append_cstring(sb, " ");
+        sb_append_int(sb, (int)i);
+        sb_append_cstring(sb, " pos ");
+        sb_append_int(sb, (int)module->x);
+        sb_append_cstring(sb, " ");
+        sb_append_int(sb, (int)module->y);
+        sb_append_cstring(sb, "\n");
         
         const void* module_addr = module->data;
         
@@ -503,7 +519,7 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
                 case TR_MODULE_FIELD_FLOAT:
                 {
                     const float value = *(float*)((uint8_t*)module_addr + field_info->offset);
-                    tr_serialize_input_float(&ctx, field_info->name, value);
+                    tr_serialize_input_float(sb, field_info->name, value);
                     break;
                 }
                     
@@ -511,14 +527,14 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
                 case TR_MODULE_FIELD_INT:
                 {
                     const int value = *(int*)((uint8_t*)module_addr + field_info->offset);
-                    tr_serialize_input_int(&ctx, field_info->name, value);
+                    tr_serialize_input_int(sb, field_info->name, value);
                     break;
                 }
 
                 case TR_MODULE_FIELD_INPUT_BUFFER:
                 {
                     const float** value = (const float**)((uint8_t*)module_addr + field_info->offset);
-                    tr_serialize_input_buffer(&ctx, field_info->name, value);
+                    tr_serialize_input_buffer(sb, rack, field_info->name, value);
                     break;
                 }
 
@@ -528,7 +544,8 @@ size_t tr_rack_serialize(char* out, rack_t* rack)
         }
     }
 
-    return ctx.pos;
+    sb_terminate(sb);
+    return 0;
 }
 
 void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
@@ -1396,10 +1413,9 @@ void tr_frame_update_draw(void)
 
     if (is_key_down(PL_KEY_LEFT_CONTROL) && is_key_pressed(PL_KEY_S))
     {
-        char* buffer = g_serialization_buffer;
-        size_t len = tr_rack_serialize(buffer, rack);
-        printf("%.*s", (int)len, buffer);
-        free(buffer);
+        tr_strbuf_t sb = {g_serialization_buffer};
+        tr_rack_serialize(&sb, rack);
+        printf("%.*s", (int)sb.pos, sb.buf);
     }
 
     if (is_key_pressed(PL_KEY_TAB))
@@ -1772,49 +1788,49 @@ static const char* TEST = "\
 module speaker 0 pos 1357 -44 \
 input_buffer in_audio > mixer 2 out_mix \
 module vco 1 pos 661 1 \
-input phase 6.057979 \
-input in_v0 118.000000 \
+input phase 0x40c1daf7 \
+input in_v0 0x42ec0000 \
 input_buffer in_voct > quantizer 8 out_cv \
 module mixer 2 pos 1082 -49 \
 input_buffer in_0 > lp 13 out_audio \
 input_buffer in_1 > lp 11 out_audio \
 input_buffer in_2 > lp 20 out_audio \
-input in_vol0 0.740000 \
-input in_vol1 0.810000 \
-input in_vol2 0.140000 \
-input in_vol3 0.000000 \
-input in_vol_final 1.000000 \
+input in_vol0 0x3f3d70a4 \
+input in_vol1 0x3f4f5c29 \
+input in_vol2 0x3e0f5c29 \
+input in_vol3 0x00000000 \
+input in_vol_final 0x3f800000 \
 module vco 3 pos 660 -173 \
-input phase 0.629575 \
-input in_v0 235.600113 \
+input phase 0x3f212bd4 \
+input in_v0 0x436b99a1 \
 input_buffer in_voct > quantizer 7 out_cv \
 module clock 4 pos -143 -20 \
-input phase 0.202133 \
-input in_hz 6.508700 \
+input phase 0x3e4efbf4 \
+input in_hz 0x40d04745 \
 module seq8 5 pos 10 -115 \
 input step 5 \
 input trig 1 \
 input_buffer in_step > clock 4 out_gate \
-input in_cv_0 0.280000 \
-input in_cv_1 0.180000 \
-input in_cv_2 0.000000 \
-input in_cv_3 0.000000 \
-input in_cv_4 0.360000 \
-input in_cv_5 0.000000 \
-input in_cv_6 0.610000 \
-input in_cv_7 0.000000 \
+input in_cv_0 0x3e8f5c29 \
+input in_cv_1 0x3e3851ec \
+input in_cv_2 0x00000000 \
+input in_cv_3 0x00000000 \
+input in_cv_4 0x3eb851ec \
+input in_cv_5 0x00000000 \
+input in_cv_6 0x3f1c28f6 \
+input in_cv_7 0x00000000 \
 module seq8 6 pos 9 -8 \
 input step 0 \
 input trig 1 \
 input_buffer in_step > clockdiv 17 out_1 \
-input in_cv_0 0.070000 \
-input in_cv_1 0.280000 \
-input in_cv_2 0.470000 \
-input in_cv_3 0.620000 \
-input in_cv_4 0.000000 \
-input in_cv_5 0.270000 \
-input in_cv_6 0.470000 \
-input in_cv_7 0.690000 \
+input in_cv_0 0x3d8f5c29 \
+input in_cv_1 0x3e8f5c29 \
+input in_cv_2 0x3ef0a3d7 \
+input in_cv_3 0x3f1eb852 \
+input in_cv_4 0x00000000 \
+input in_cv_5 0x3e8a3d71 \
+input in_cv_6 0x3ef0a3d7 \
+input in_cv_7 0x3f30a3d7 \
 module quantizer 7 pos 437 -138 \
 input in_mode 3 \
 input_buffer in_cv > seq8 5 out_cv \
@@ -1822,37 +1838,37 @@ module quantizer 8 pos 439 -15 \
 input in_mode 3 \
 input_buffer in_cv > seq8 6 out_cv \
 module adsr 9 pos 796 252 \
-input value 0.988310 \
+input value 0x3f7d01e2 \
 input gate 1 \
 input state 1 \
-input in_attack 0.310690 \
-input in_decay 0.210790 \
-input in_sustain 0.410000 \
-input in_release 0.870129 \
+input in_attack 0x3e9f12c2 \
+input in_decay 0x3e57d955 \
+input in_sustain 0x3ed1eb85 \
+input in_release 0x3f5ec0c6 \
 input_buffer in_gate > clock 4 out_gate \
 module adsr 10 pos 1658 337 \
-input value 0.000000 \
+input value 0x00000000 \
 input gate 0 \
 input state 0 \
-input in_attack 0.000000 \
-input in_decay 0.000000 \
-input in_sustain 0.000000 \
-input in_release 0.000000 \
+input in_attack 0x00000000 \
+input in_decay 0x00000000 \
+input in_sustain 0x00000000 \
+input in_release 0x00000000 \
 module lp 11 pos 779 9 \
-input value 0.000000 \
-input z 0.538930 \
+input value 0x00000000 \
+input z 0x3f09f751 \
 input_buffer in_audio > vco 1 out_saw \
 input_buffer in_cut > adsr 9 out_env \
-input in_cut0 0.000000 \
-input in_cut_mul 0.460000 \
+input in_cut0 0x00000000 \
+input in_cut_mul 0x3eeb851f \
 module vca 12 pos 1655 452 \
 module lp 13 pos 779 -111 \
-input value 0.000000 \
-input z 0.094695 \
+input value 0x00000000 \
+input z 0x3dc1ef74 \
 input_buffer in_audio > vco 3 out_saw \
 input_buffer in_cut > adsr 9 out_env \
-input in_cut0 0.000000 \
-input in_cut_mul 0.480000 \
+input in_cut0 0x00000000 \
+input in_cut_mul 0x3ef5c28f \
 module scope 14 pos 1098 87 \
 input_buffer in_0 > lp 11 out_audio \
 module scope 15 pos 1475 -97 \
@@ -1860,41 +1876,41 @@ input_buffer in_0 > mixer 2 out_mix \
 module scope 16 pos 1099 -288 \
 input_buffer in_0 > lp 13 out_audio \
 module clockdiv 17 pos 10 -223 \
-input gate 0.000000 \
+input gate 0x00000000 \
 input state 70 \
 input_buffer in_gate > clock 4 out_gate \
 module adsr 18 pos 789 373 \
-input value 0.567364 \
+input value 0x3f113ec4 \
 input gate 1 \
 input state 0 \
-input in_attack 0.770230 \
-input in_decay 0.001000 \
-input in_sustain 1.000000 \
-input in_release 0.520480 \
+input in_attack 0x3f452dcb \
+input in_decay 0x3a83126f \
+input in_sustain 0x3f800000 \
+input in_release 0x3f053e2d \
 input_buffer in_gate > clockdiv 17 out_2 \
 module vco 19 pos 659 184 \
-input phase 5.398239 \
-input in_v0 118.000015 \
+input phase 0x40acbe60 \
+input in_v0 0x42ec0002 \
 input_buffer in_voct > quantizer 22 out_cv \
 module lp 20 pos 777 126 \
-input value 0.000000 \
-input z 0.603262 \
+input value 0x00000000 \
+input z 0x3f1a6f61 \
 input_buffer in_audio > vco 19 out_saw \
 input_buffer in_cut > adsr 18 out_env \
-input in_cut0 0.140000 \
-input in_cut_mul 0.780000 \
+input in_cut0 0x3e0f5c29 \
+input in_cut_mul 0x3f47ae14 \
 module seq8 21 pos 9 104 \
 input step 0 \
 input trig 1 \
 input_buffer in_step > clockdiv 17 out_2 \
-input in_cv_0 0.000000 \
-input in_cv_1 0.480000 \
-input in_cv_2 0.000000 \
-input in_cv_3 1.000000 \
-input in_cv_4 0.000000 \
-input in_cv_5 0.480000 \
-input in_cv_6 0.680000 \
-input in_cv_7 1.000000 \
+input in_cv_0 0x00000000 \
+input in_cv_1 0x3ef5c28f \
+input in_cv_2 0x00000000 \
+input in_cv_3 0x3f800000 \
+input in_cv_4 0x00000000 \
+input in_cv_5 0x3ef5c28f \
+input in_cv_6 0x3f2e147b \
+input in_cv_7 0x3f800000 \
 module quantizer 22 pos 436 109 \
 input in_mode 3 \
 input_buffer in_cv > seq8 21 out_cv";
@@ -1915,6 +1931,16 @@ int main()
     }
 #else
     tr_rack_deserialize(rack, TEST, strlen(TEST));
+
+#if 1
+    {
+        tr_strbuf_t sb = {g_serialization_buffer};
+        tr_rack_serialize(&sb, rack);
+        printf("sb.pos: %zu\n", sb.pos);
+        printf("%s", sb.buf);
+    }
+#endif
+
     const rectangle_t bounds = tr_compute_patch_bounds(rack);
     g_input.camera.target.x = bounds.x + bounds.width * 0.5f;
     g_input.camera.target.y = bounds.y + bounds.height * 0.5f;
