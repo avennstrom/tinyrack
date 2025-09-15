@@ -1645,7 +1645,7 @@ void tr_frame_update_draw(void)
                 x = 10;
                 y += 180;
             }
-
+            
             tr_gui_module_t m = {x, y, module_type, tr_module_pool_get(&rack->module_pool[module_type], TR_MODULE_POOL_SIZE - 1)};
             tr_gui_module_draw(rack, &m);
 
