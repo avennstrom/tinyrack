@@ -12,15 +12,13 @@
 #include "parser.h"
 #include "platform.h"
 #include "math.h"
+#include "stdlib.h"
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <math.h>
-#include <assert.h>
-#include <time.h>
 #include <float.h>
-#include <string.h>
+
+#define assert(x)
 
 // debug stuff
 #define TR_TRACE_MODULE_UPDATES 0
@@ -1930,14 +1928,14 @@ int main()
     app->recording_offset = 0;
 #endif
 
-#ifdef __EMSCRIPTEN__
-    emscripten_set_main_loop(tr_frame_update_draw, 0, 1);
-#else
-    while (platform_running())
-    {
-        tr_frame_update_draw();
-    }
-#endif
+// #ifdef __EMSCRIPTEN__
+//     emscripten_set_main_loop(tr_frame_update_draw, 0, 1);
+// #else
+//     while (platform_running())
+//     {
+//         tr_frame_update_draw();
+//     }
+// #endif
 
     return 0;
 }
