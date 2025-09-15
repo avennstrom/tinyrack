@@ -2,7 +2,7 @@
 
 #include "types.h"
 
-#include <math.h>
+#define sqrtf(x)  __builtin_sqrtf(x)
 
 static inline float float_lerp(float a, float b, float t)
 {

@@ -20,9 +20,7 @@
 #include <assert.h>
 #include <time.h>
 #include <float.h>
-
-#define STB_DS_IMPLEMENTATION
-#include "stb_ds.h"
+#include <string.h>
 
 // debug stuff
 #define TR_TRACE_MODULE_UPDATES 0
@@ -78,6 +76,7 @@ typedef struct tr_gui_module
 } tr_gui_module_t;
 
 #define TR_GUI_MODULE_COUNT 1024
+#define TR_MAX_CABLES (4 * 1024)
 
 typedef struct tr_output_plug
 {
@@ -85,43 +84,76 @@ typedef struct tr_output_plug
     const tr_gui_module_t* module;
 } tr_output_plug_t;
 
-typedef struct tr_output_plug_kv
-{
-    const float* key;
-    tr_output_plug_t value;
-} tr_output_plug_kv_t;
-
 typedef struct tr_input_plug
 {
     color_t color;
 } tr_input_plug_t;
-
-typedef struct tr_input_plug_kv
-{
-    const float** key;
-    tr_input_plug_t value;
-} tr_input_plug_kv_t;
-
-typedef struct tr_plugmap
-{
-    uint64_t keys[64 * 1024];
-} tr_plugmap_t;
-
-
-
-tr_plugmap_t g_plugmap;
 
 typedef struct rack
 {
     tr_module_pool_t module_pool[TR_MODULE_COUNT];
     tr_gui_module_t gui_modules[TR_GUI_MODULE_COUNT];
     size_t gui_module_count;
-    tr_output_plug_kv_t* output_plugs;
-    tr_input_plug_kv_t* input_plugs;
+    uint32_t output_plugs_key[TR_MAX_CABLES];
+    tr_output_plug_t output_plugs[TR_MAX_CABLES];
+    uint32_t input_plugs_key[TR_MAX_CABLES];
+    tr_input_plug_t input_plugs[TR_MAX_CABLES];
 } rack_t;
 
 static uint8_t g_rb_memory[1024 * 1024];
 static render_buffer_t g_rb = {g_rb_memory};
+
+static inline uint32_t tr_ptr_hash32(const void *p)
+{
+    uint32_t x = (uint32_t)(uintptr_t)p;
+    x ^= x >> 16;
+    x *= 0x7feb352dU;
+    x ^= x >> 15;
+    x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+// -1 if not found
+static int tr_hmget(const uint32_t* keys, const void* key)
+{
+    const uint32_t hash = tr_ptr_hash32(key);
+    const size_t offset = hash % TR_MAX_CABLES;
+    for (size_t i = 0; i < TR_MAX_CABLES; ++i)
+    {
+        const size_t j = (offset + i) % TR_MAX_CABLES;
+        const uint32_t k = keys[j];
+        if (k == hash)
+        {
+            return (int)j;
+        }
+        else if (k == 0u)
+        {
+            return -1;
+        }
+    }
+
+    return -1;
+}
+
+static int tr_hmput(uint32_t* keys, const void* key)
+{
+    const uint32_t hash = tr_ptr_hash32(key);
+    const size_t offset = hash % TR_MAX_CABLES;
+
+    for (size_t i = 0; i < TR_MAX_CABLES; ++i)
+    {
+        const size_t j = (offset + i) % TR_MAX_CABLES;
+        const uint32_t k = keys[j];
+        if (k == 0u || k == hash)
+        {
+            keys[j] = hash;
+            return (int)j;
+        }
+    }
+
+    return -1; // we goofed
+}
 
 static void draw_rectangle_rounded(rectangle_t rec, float roundness, color_t color)
 {
@@ -182,8 +214,8 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
 
 void rack_init(rack_t* rack)
 {
-    hmfree(rack->input_plugs);
-    hmfree(rack->output_plugs);
+    // hmfree(rack->input_plugs);
+    // hmfree(rack->output_plugs);
 
     for (int i = 0; i < TR_MODULE_COUNT; ++i)
     {
@@ -423,9 +455,9 @@ void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, co
         return;
     }
 
-    const tr_output_plug_kv_t* plug_kv = hmgetp_null(ctx->rack->output_plugs, buffer);
-    assert(plug_kv != NULL);
-    const tr_output_plug_t* plug = &plug_kv->value;
+    const int plug_idx = tr_hmget(ctx->rack->output_plugs_key, buffer);
+    assert(plug_idx != -1);
+    const tr_output_plug_t* plug = &ctx->rack->output_plugs[plug_idx];
 
     const size_t module_index = tr_get_gui_module_index(ctx->rack, plug->module);
 
@@ -446,8 +478,6 @@ void tr_serialize_input_buffer(tr_serialize_context_t* ctx, const char* name, co
     }
     assert(field_info != NULL);
     assert(field_info->type == TR_MODULE_FIELD_BUFFER);
-
-    //const color_t color = hmget(g_input.input_plugs, value).color;
 
     ctx->pos += sprintf(ctx->out + ctx->pos, "input_buffer %s > %s %zu %s\n", name, module_info->id, module_index, field_info->name);
 }
@@ -527,7 +557,8 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
             {
                 const tr_output_plug_t p = {cmd->x, cmd->y, module};
                 float* field_addr = get_field_address(module, field_index);
-                hmput(rack->output_plugs, field_addr, p);
+                const int output_plug_idx = tr_hmput(rack->output_plugs_key, field_addr);
+                rack->output_plugs[output_plug_idx] = p;
             }
         }
     }
@@ -553,7 +584,8 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
                 memcpy(field_addr, &target_field_addr, sizeof(void*));
 
                 const tr_input_plug_t plug = {tr_random_cable_color()};
-                hmput(rack->input_plugs, field_addr, plug);
+                const int input_plug_idx = tr_hmput(rack->input_plugs_key, field_addr);
+                rack->input_plugs[input_plug_idx] = plug;
                 break;
         }
     }
@@ -796,12 +828,15 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, size_
     
     if (*value != NULL)
     {
-        const tr_output_plug_t plug = hmget(rack->output_plugs, *value);
-        const tr_input_plug_t input_plug = hmget(rack->input_plugs, value);
+        const int output_plug_idx = tr_hmget(rack->output_plugs_key, *value);
+        const tr_output_plug_t* output_plug = &rack->output_plugs[output_plug_idx];
+        const int input_plug_idx = tr_hmget(rack->input_plugs_key, value);
+        const tr_input_plug_t* input_plug = &rack->input_plugs[input_plug_idx];
+
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
-            .to = {(float)plug.x, (float)plug.y},
-            .color = input_plug.color,
+            .to = {(float)output_plug->x, (float)output_plug->y},
+            .color = input_plug->color,
         };
     }
 
@@ -870,7 +905,8 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, size
     }
     
     const tr_output_plug_t plug = {x, y, module};
-    hmput(rack->output_plugs, buffer, plug);
+    const int output_plug_idx = tr_hmput(rack->output_plugs_key, buffer);
+    rack->output_plugs[output_plug_idx] = plug;
 }
 
 void tr_led(float x, float y, color_t color)
@@ -1052,8 +1088,10 @@ size_t tr_collect_leaf_modules(rack_t* rack, const tr_gui_module_t* leaf_modules
                 continue;
             }
 
-            const tr_output_plug_t plug = hmget(rack->output_plugs, inputs[input_index]);
-            const size_t module_index = tr_get_gui_module_index(rack, plug.module);
+            const int output_plug_idx = tr_hmget(rack->output_plugs_key, inputs[input_index]);
+            const tr_output_plug_t* output_plug = &rack->output_plugs[output_plug_idx];
+            
+            const size_t module_index = tr_get_gui_module_index(rack, output_plug->module);
             output_mask[module_index / 32] |= 1 << (module_index % 32);
         }
     }
@@ -1154,10 +1192,11 @@ size_t tr_resolve_module_graph(tr_gui_module_t** update_modules, rack_t* rack)
                     continue;
                 }
 
-                const tr_output_plug_t plug = hmget(rack->output_plugs, inputs[i]);
+                const int output_plug_idx = tr_hmget(rack->output_plugs_key, inputs[i]);
+                const tr_output_plug_t* output_plug = &rack->output_plugs[output_plug_idx];
 
                 assert(sp < tr_countof(stack));
-                stack[sp++] = (stack_item_t){plug.module, top.module};
+                stack[sp++] = (stack_item_t){output_plug->module, top.module};
             }
         }
     }
@@ -1397,12 +1436,13 @@ void tr_frame_update_draw(void)
 
                 if (*input != NULL)
                 {
-                    const tr_input_plug_kv_t* plug = hmgetp_null(rack->input_plugs, input);
-                    assert(plug != NULL);
+                    const int input_plug_idx = tr_hmget(rack->input_plugs_key, input);
+                    assert(input_plug_idx != -1);
+                    const tr_input_plug_t* input_plug = &rack->input_plugs[input_plug_idx];
+
                     g_input.drag_output = *input;
-                    g_input.drag_color = plug->value.color;
+                    g_input.drag_color = input_plug->color;
                     *input = NULL;
-                    hmdel(rack->input_plugs, input);
                 }
                 else
                 {
@@ -1539,7 +1579,8 @@ void tr_frame_update_draw(void)
                 const float* output = get_field_address(module, field_index);
 
                 const tr_input_plug_t plug = {g_input.drag_color};
-                hmput(rack->input_plugs, g_input.drag_input, plug);
+                const int input_plug_idx = tr_hmput(rack->input_plugs_key, g_input.drag_input);
+                rack->input_plugs[input_plug_idx] = plug;
                 *g_input.drag_input = output;
             }
             else
@@ -1557,7 +1598,8 @@ void tr_frame_update_draw(void)
                 const float** input = get_field_address(module, field_index);
 
                 const tr_input_plug_t plug = {g_input.drag_color};
-                hmput(rack->input_plugs, input, plug);
+                const int input_plug_idx = tr_hmput(rack->input_plugs_key, input);
+                rack->input_plugs[input_plug_idx] = plug;
                 *input = g_input.drag_output;
             }
         }
