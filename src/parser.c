@@ -53,6 +53,16 @@ bool tr_advance(tr_tokenizer_t* t)
     return true;
 }
 
+const int ishexdigit(char c)
+{
+    return 
+        (c >= '0' && c <= '9') ||
+        (c >= 'a' && c <= 'f') ||
+        (c >= 'A' && c <= 'F');
+}
+
+
+
 tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
 {
     while (isspace(t->buf[t->pos]) || t->buf[t->pos] == '\n')
@@ -75,9 +85,20 @@ tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
     else if (isdigit(c) || c == '-')
     {
         const size_t start = t->pos;
-        while (isdigit(t->buf[t->pos]) || t->buf[t->pos] == '.' || t->buf[t->pos] == '-')
+        if (t->buf[t->pos] == '0' && t->buf[t->pos + 1] == 'x')
         {
-            if (!tr_advance(t)) return tr_eof_token;
+            t->pos += 2;
+            while (ishexdigit(t->buf[t->pos]))
+            {
+                if (!tr_advance(t)) return tr_eof_token;
+            }
+        }
+        else
+        {
+            while (isdigit(t->buf[t->pos]) || t->buf[t->pos] == '.' || t->buf[t->pos] == '-')
+            {
+                if (!tr_advance(t)) return tr_eof_token;
+            }
         }
         const tr_token_t tok = {TR_TOKEN_NUMBER, start, t->pos - start};
         return tok;
@@ -103,7 +124,7 @@ tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
 tr_token_t tr_next_token(tr_tokenizer_t* t)
 {
     tr_token_t tok = tr_next_token_internal(t);
-    //printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
+    printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
     return tok;
 }
 
@@ -125,6 +146,40 @@ int tr_token_to_int(const char* buf, const tr_token_t* tok)
     memcpy(temp, buf + tok->pos, tok->len);
     temp[tok->len] = '\0';
     return atoi(temp);
+}
+
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1; // invalid
+}
+
+float tr_token_to_float(const char* buf, const tr_token_t* tok)
+{
+    assert(tok->type == TR_TOKEN_NUMBER);
+    assert(tok->len == 10);
+
+    const char* s = buf + tok->pos;
+    assert(s[0] == '0');
+    assert(s[1] == 'x');
+    s += 2;
+
+    uint32_t value = 0;
+    for (int i = 0; i < 8; ++i)
+    {
+        const int d = hex_digit(*s);
+        assert(d >= 0);
+
+        value = (value << 4) | (uint32_t)d;
+        s++;
+    }
+
+    // reinterpret bits as float
+    float f;
+    *(uint32_t *)&f = value; // type punning through union is safer
+    return f;
 }
 
 int tr_parse_line(tr_parser_t* p, tr_tokenizer_t* t)
@@ -208,13 +263,13 @@ int tr_parse_line(tr_parser_t* p, tr_tokenizer_t* t)
         if (field_info->type == TR_MODULE_FIELD_FLOAT ||
             field_info->type == TR_MODULE_FIELD_INPUT_FLOAT)
         {
-            const float v = (float)atof(t->buf + field_value_tok.pos);
+            const float v = tr_token_to_float(t->buf, &field_value_tok);
             memcpy(value->value, &v, sizeof(v));
             value->value_size = sizeof(v);
         }
         else
         {
-            const int v = atoi(t->buf + field_value_tok.pos);
+            const int v = tr_token_to_int(t->buf, &field_value_tok);
             memcpy(value->value, &v, sizeof(v));
             value->value_size = sizeof(v);
         }

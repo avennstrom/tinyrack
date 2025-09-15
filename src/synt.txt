@@ -1,49 +1,49 @@
 module speaker 0 pos 1357 -44
 input_buffer in_audio > mixer 2 out_mix
 module vco 1 pos 661 1
-input phase 6.057979
-input in_v0 118.000000
+input phase 0x40c1daf7
+input in_v0 0x42ec0000
 input_buffer in_voct > quantizer 8 out_cv
 module mixer 2 pos 1082 -49
 input_buffer in_0 > lp 13 out_audio
 input_buffer in_1 > lp 11 out_audio
 input_buffer in_2 > lp 20 out_audio
-input in_vol0 0.740000
-input in_vol1 0.810000
-input in_vol2 0.140000
-input in_vol3 0.000000
-input in_vol_final 1.000000
+input in_vol0 0x3f3d70a4
+input in_vol1 0x3f4f5c29
+input in_vol2 0x3e0f5c29
+input in_vol3 0x00000000
+input in_vol_final 0x3f800000
 module vco 3 pos 660 -173
-input phase 0.629575
-input in_v0 235.600113
+input phase 0x3f212bd4
+input in_v0 0x436b99a1
 input_buffer in_voct > quantizer 7 out_cv
 module clock 4 pos -143 -20
-input phase 0.202133
-input in_hz 6.508700
+input phase 0x3e4efbf4
+input in_hz 0x40d04745
 module seq8 5 pos 10 -115
 input step 5
 input trig 1
 input_buffer in_step > clock 4 out_gate
-input in_cv_0 0.280000
-input in_cv_1 0.180000
-input in_cv_2 0.000000
-input in_cv_3 0.000000
-input in_cv_4 0.360000
-input in_cv_5 0.000000
-input in_cv_6 0.610000
-input in_cv_7 0.000000
+input in_cv_0 0x3e8f5c29
+input in_cv_1 0x3e3851ec
+input in_cv_2 0x00000000
+input in_cv_3 0x00000000
+input in_cv_4 0x3eb851ec
+input in_cv_5 0x00000000
+input in_cv_6 0x3f1c28f6
+input in_cv_7 0x00000000
 module seq8 6 pos 9 -8
 input step 0
 input trig 1
 input_buffer in_step > clockdiv 17 out_1
-input in_cv_0 0.070000
-input in_cv_1 0.280000
-input in_cv_2 0.470000
-input in_cv_3 0.620000
-input in_cv_4 0.000000
-input in_cv_5 0.270000
-input in_cv_6 0.470000
-input in_cv_7 0.690000
+input in_cv_0 0x3d8f5c29
+input in_cv_1 0x3e8f5c29
+input in_cv_2 0x3ef0a3d7
+input in_cv_3 0x3f1eb852
+input in_cv_4 0x00000000
+input in_cv_5 0x3e8a3d71
+input in_cv_6 0x3ef0a3d7
+input in_cv_7 0x3f30a3d7
 module quantizer 7 pos 437 -138
 input in_mode 3
 input_buffer in_cv > seq8 5 out_cv
@@ -51,37 +51,37 @@ module quantizer 8 pos 439 -15
 input in_mode 3
 input_buffer in_cv > seq8 6 out_cv
 module adsr 9 pos 796 252
-input value 0.988310
+input value 0x3f7d01e2
 input gate 1
 input state 1
-input in_attack 0.310690
-input in_decay 0.210790
-input in_sustain 0.410000
-input in_release 0.870129
+input in_attack 0x3e9f12c2
+input in_decay 0x3e57d955
+input in_sustain 0x3ed1eb85
+input in_release 0x3f5ec0c6
 input_buffer in_gate > clock 4 out_gate
 module adsr 10 pos 1658 337
-input value 0.000000
+input value 0x00000000
 input gate 0
 input state 0
-input in_attack 0.000000
-input in_decay 0.000000
-input in_sustain 0.000000
-input in_release 0.000000
+input in_attack 0x00000000
+input in_decay 0x00000000
+input in_sustain 0x00000000
+input in_release 0x00000000
 module lp 11 pos 779 9
-input value 0.000000
-input z 0.538930
+input value 0x00000000
+input z 0x3f09f751
 input_buffer in_audio > vco 1 out_saw
 input_buffer in_cut > adsr 9 out_env
-input in_cut0 0.000000
-input in_cut_mul 0.460000
+input in_cut0 0x00000000
+input in_cut_mul 0x3eeb851f
 module vca 12 pos 1655 452
 module lp 13 pos 779 -111
-input value 0.000000
-input z 0.094695
+input value 0x00000000
+input z 0x3dc1ef74
 input_buffer in_audio > vco 3 out_saw
 input_buffer in_cut > adsr 9 out_env
-input in_cut0 0.000000
-input in_cut_mul 0.480000
+input in_cut0 0x00000000
+input in_cut_mul 0x3ef5c28f
 module scope 14 pos 1098 87
 input_buffer in_0 > lp 11 out_audio
 module scope 15 pos 1475 -97
@@ -89,41 +89,41 @@ input_buffer in_0 > mixer 2 out_mix
 module scope 16 pos 1099 -288
 input_buffer in_0 > lp 13 out_audio
 module clockdiv 17 pos 10 -223
-input gate 0.000000
+input gate 0x00000000
 input state 70
 input_buffer in_gate > clock 4 out_gate
 module adsr 18 pos 789 373
-input value 0.567364
+input value 0x3f113ec4
 input gate 1
 input state 0
-input in_attack 0.770230
-input in_decay 0.001000
-input in_sustain 1.000000
-input in_release 0.520480
+input in_attack 0x3f452dcb
+input in_decay 0x3a83126f
+input in_sustain 0x3f800000
+input in_release 0x3f053e2d
 input_buffer in_gate > clockdiv 17 out_2
 module vco 19 pos 659 184
-input phase 5.398239
-input in_v0 118.000015
+input phase 0x40acbe60
+input in_v0 0x42ec0002
 input_buffer in_voct > quantizer 22 out_cv
 module lp 20 pos 777 126
-input value 0.000000
-input z 0.603262
+input value 0x00000000
+input z 0x3f1a6f61
 input_buffer in_audio > vco 19 out_saw
 input_buffer in_cut > adsr 18 out_env
-input in_cut0 0.140000
-input in_cut_mul 0.780000
+input in_cut0 0x3e0f5c29
+input in_cut_mul 0x3f47ae14
 module seq8 21 pos 9 104
 input step 0
 input trig 1
 input_buffer in_step > clockdiv 17 out_2
-input in_cv_0 0.000000
-input in_cv_1 0.480000
-input in_cv_2 0.000000
-input in_cv_3 1.000000
-input in_cv_4 0.000000
-input in_cv_5 0.480000
-input in_cv_6 0.680000
-input in_cv_7 1.000000
+input in_cv_0 0x00000000
+input in_cv_1 0x3ef5c28f
+input in_cv_2 0x00000000
+input in_cv_3 0x3f800000
+input in_cv_4 0x00000000
+input in_cv_5 0x3ef5c28f
+input in_cv_6 0x3f2e147b
+input in_cv_7 0x3f800000
 module quantizer 22 pos 436 109
 input in_mode 3
 input_buffer in_cv > seq8 21 out_cv
