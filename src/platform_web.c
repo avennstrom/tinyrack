@@ -2,6 +2,7 @@
 #include "config.h"
 
 #include "font2.h"
+#include "math.h"
 
 #include <emscripten.h>
 #include <stdlib.h>

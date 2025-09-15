@@ -1,13 +1,9 @@
 #include "modules.h"
 #include "platform.h"
+#include "math.h"
 
 #include <math.h>
 #include <string.h>
-
-float tr_hz(float voct)
-{
-    return voct * 100.0f;
-}
 
 //
 // tr_vco_t

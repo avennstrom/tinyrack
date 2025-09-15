@@ -11,6 +11,7 @@
 #include "modules.reflection.h"
 #include "parser.h"
 #include "platform.h"
+#include "math.h"
 
 #include <stdbool.h>
 #include <stdint.h>
