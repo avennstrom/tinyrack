@@ -53,18 +53,19 @@
 
 #define TR_CABLE_ALPHA 0.75f
 
-#define TR_MODULE_POOL_SIZE 1024
+#define TR_MODULE_DATA_POOL_SIZE (16 * 1024 * 1024)
 
 typedef struct tr_module_pool
 {
-    size_t count;
-    size_t element_size;
-    void* elements;
+    uint8_t* data;
+    size_t offset;
 } tr_module_pool_t;
 
-static void* tr_module_pool_get(const tr_module_pool_t* pool, size_t index)
+static void* tr_module_pool_alloc(tr_module_pool_t* pool, size_t size)
 {
-    return (uint8_t*)pool->elements + (pool->element_size * index);
+    void* data = pool->data + pool->offset;
+    pool->offset += size;
+    return data;
 }
 
 typedef struct tr_gui_module
@@ -90,7 +91,7 @@ typedef struct tr_input_plug
 
 typedef struct rack
 {
-    tr_module_pool_t module_pool[TR_MODULE_COUNT];
+    tr_module_pool_t module_pool;
     tr_gui_module_t gui_modules[TR_GUI_MODULE_COUNT];
     size_t gui_module_count;
     uint32_t output_plugs_key[TR_MAX_CABLES];
@@ -98,6 +99,9 @@ typedef struct rack
     uint32_t input_plugs_key[TR_MAX_CABLES];
     tr_input_plug_t input_plugs[TR_MAX_CABLES];
 } rack_t;
+
+static uint8_t g_module_pool_memory[64 * 1024 * 1024];
+static uint8_t g_null_module[64 * 1024];
 
 static uint8_t g_rb_memory[1024 * 1024];
 static render_buffer_t g_rb = {g_rb_memory};
@@ -189,12 +193,14 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
     memset(module, 0, sizeof(tr_gui_module_t));
     module->type = type;
 
-    tr_module_pool_t* pool = &rack->module_pool[type];
-    assert(pool->elements != NULL);
-    const size_t module_data_index = pool->count++;
-    module->data = tr_module_pool_get(pool, module_data_index);
-    
+    //tr_module_pool_t* pool = &rack->module_pool[type];
+    //assert(pool->elements != NULL);
+    //const size_t module_data_index = pool->count++;
+    //module->data = tr_module_pool_get(pool, module_data_index);
+
     const tr_module_info_t* module_info = &tr_module_infos[type];
+    module->data = tr_module_pool_alloc(&rack->module_pool, module_info->struct_size);
+    
     for (size_t i = 0; i < module_info->field_count; ++i)
     {
         const tr_module_field_info_t* field_info = &module_info->fields[i];
@@ -213,21 +219,8 @@ tr_gui_module_t* tr_rack_create_module(rack_t* rack, enum tr_module_type type)
 
 void rack_init(rack_t* rack)
 {
-    // hmfree(rack->input_plugs);
-    // hmfree(rack->output_plugs);
-
-    for (int i = 0; i < TR_MODULE_COUNT; ++i)
-    {
-        free(rack->module_pool[i].elements);
-    }
-
     memset(rack, 0, sizeof(rack_t));
-
-    for (int i = 0; i < TR_MODULE_COUNT; ++i)
-    {
-        rack->module_pool[i].element_size = tr_module_infos[i].struct_size;
-        rack->module_pool[i].elements = calloc(TR_MODULE_POOL_SIZE, tr_module_infos[i].struct_size);
-    }
+    rack->module_pool.data = g_module_pool_memory;
 }
 
 typedef struct tr_cable_draw_command
@@ -1645,8 +1638,8 @@ void tr_frame_update_draw(void)
                 x = 10;
                 y += 180;
             }
-            
-            tr_gui_module_t m = {x, y, module_type, tr_module_pool_get(&rack->module_pool[module_type], TR_MODULE_POOL_SIZE - 1)};
+
+            tr_gui_module_t m = {x, y, module_type, g_null_module};
             tr_gui_module_draw(rack, &m);
 
             if (is_mouse_button_pressed(PL_MOUSE_BUTTON_LEFT) && 
