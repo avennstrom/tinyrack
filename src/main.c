@@ -1,11 +1,3 @@
-#ifdef __EMSCRIPTEN__
-#include <emscripten/emscripten.h>
-#endif
-
-#ifndef __EMSCRIPTEN__
-//#define TR_RECORDING_FEATURE
-#endif
-
 #include "timer.h"
 #include "modules.h"
 #include "modules.reflection.h"
@@ -18,8 +10,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <float.h>
-
-#define assert(x)
 
 // debug stuff
 #define TR_TRACE_MODULE_UPDATES 0
@@ -790,7 +780,7 @@ void tr_gui_knob_int(const tr_gui_module_t* module, size_t field_index)
         {
             g_input.active_int -= get_mouse_delta().y * (max - min) * 0.01f;
 
-            *value = (int)roundf(g_input.active_int);
+            *value = (int)tr_roundf(g_input.active_int);
             if (*value < min) *value = min;
             if (*value > max) *value = max;
         }
@@ -1286,7 +1276,12 @@ void tr_produce_final_mix(float* output, rack_t* rack)
     tb_stop(&g_app.tb_produce_final_mix);
 }
 
-EMSCRIPTEN_KEEPALIVE
+static float g_pcm_memory[128];
+float* pcm_alloc(void)
+{
+    return g_pcm_memory;
+}
+
 void tr_audio_callback(void* bufferData, size_t frames)
 {
     float* samples = bufferData;
@@ -1378,10 +1373,15 @@ void tr_draw_cable(float2 a, float2 b, float slack, float thick, color_t color)
 
 static char g_serialization_buffer[1024 * 1024];
 
+__attribute__((import_module("env"), import_name("console_log")))
+extern void console_log(const char* text);
+
 void tr_frame_update_draw(void)
 {
     app_t* app = &g_app;
     rack_t* rack = &app->rack;
+
+    console_log("cock");
 
     tb_start(&app->tb_frame_update_draw);
 
@@ -1408,7 +1408,7 @@ void tr_frame_update_draw(void)
     {
         tr_strbuf_t sb = {g_serialization_buffer};
         tr_rack_serialize(&sb, rack);
-        printf("%.*s", (int)sb.pos, sb.buf);
+        //printf("%.*s", (int)sb.pos, sb.buf);
     }
 
     if (is_key_pressed(PL_KEY_TAB))
@@ -1530,6 +1530,7 @@ void tr_frame_update_draw(void)
 
     g_input.cable_draw_count = 0;
     
+#if 0
     tb_start(&app->tb_draw_modules);
 
     g_input.do_not_process_input = app->picker_mode;
@@ -1540,6 +1541,7 @@ void tr_frame_update_draw(void)
     g_input.do_not_process_input = false;
 
     tb_stop(&app->tb_draw_modules);
+#endif
 
     for (size_t i = 0; i < g_input.cable_draw_count; ++i)
     {
@@ -1687,6 +1689,7 @@ void tr_frame_update_draw(void)
     }
 #endif
 
+#if 0
     {
         struct {const char* name; const timer_buffer_t* tb;} tb_draw_infos[] = {
             {"final_mix", &g_app.tb_produce_final_mix},
@@ -1712,6 +1715,7 @@ void tr_frame_update_draw(void)
             draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
         }
     }
+#endif
 
     {
 #if 0
@@ -1908,12 +1912,12 @@ module quantizer 22 pos 436 109 \
 input in_mode 3 \
 input_buffer in_cv > seq8 21 out_cv";
 
-int main()
+int _start()
 {
     app_t* app = &g_app;
     rack_t* rack = &app->rack;
 
-    srand((unsigned int)time(NULL));
+    //srand((unsigned int)time(NULL));
 
 #if 0
     rack_init(rack);
@@ -1929,8 +1933,8 @@ int main()
     {
         tr_strbuf_t sb = {g_serialization_buffer};
         tr_rack_serialize(&sb, rack);
-        printf("sb.pos: %zu\n", sb.pos);
-        printf("%s", sb.buf);
+        // printf("sb.pos: %zu\n", sb.pos);
+        // printf("%s", sb.buf);
     }
 #endif
 

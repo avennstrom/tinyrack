@@ -1,15 +1,9 @@
 #include "platform.h"
 #include "config.h"
-
-#include "font2.h"
 #include "math.h"
+#include "stdlib.h"
+#include "font2.h"
 
-#include <emscripten.h>
-#include <stdlib.h>
-#include <assert.h>
-#include <math.h>
-#include <stdio.h>
-#include <string.h>
 #include <float.h>
 
 #define WEBGL_LINE_STRIP 0x0003
@@ -40,8 +34,11 @@ _Static_assert(sizeof(vertex_t) == 16, "");
 static vertex_t g_vertices[1 * 1024 * 1024];
 static draw_t g_draws[64 * 1024];
 
+__attribute__((import_module("env"), import_name("js_init")))
 extern void js_init(void);
+__attribute__((import_module("env"), import_name("js_render")))
 extern void js_render(const draw_t* draws, uint32_t draw_count, const vertex_t* vertex_data, uint32_t vertex_count);
+__attribute__((import_module("env"), import_name("js_set_cursor")))
 extern void js_set_cursor(int cursor);
 
 void platform_init(size_t sample_rate, size_t sample_count, platform_audio_callback audio_callback)
@@ -78,40 +75,28 @@ mouse_button_t js_mouse_button(int js_button)
 static int canvas_w = 240;
 static int canvas_h = 240;
 
-EMSCRIPTEN_KEEPALIVE
-void* my_malloc(size_t size)
-{
-    return malloc(size);
-}
-
-EMSCRIPTEN_KEEPALIVE
 void js_canvas_size(int w, int h)
 {
     canvas_w = w;
     canvas_h = h;
-    printf("CANVAS RESIZE %d, %d\n", w, h);
 }
 
-EMSCRIPTEN_KEEPALIVE
 void js_mousedown(int button)
 {
     input.mouse_buttons[js_mouse_button(button)] = 1;
 }
 
-EMSCRIPTEN_KEEPALIVE
 void js_mouseup(int button)
 {
     input.mouse_buttons[js_mouse_button(button)] = 0;
 }
 
-EMSCRIPTEN_KEEPALIVE
 void js_mousemove(int x, int y)
 {
     input.mouse_x = x;
     input.mouse_y = y;
 }
 
-EMSCRIPTEN_KEEPALIVE
 void js_mousewheel(float x, float y)
 {
     input.mouse_wheel_x += x;
@@ -301,8 +286,8 @@ static void draw_circle_arc(draw_context_t* dc, float2 pos, float radius, float 
     {
         const float a0 = float_lerp(a00, a11, (i * (1.0f / N)));
         const float a1 = float_lerp(a00, a11, ((i + 1) * (1.0f / N)));
-        const float2 v0 = {pos.x + cosf(a0) * radius, pos.y + sinf(a0) * radius};
-        const float2 v1 = {pos.x + cosf(a1) * radius, pos.y + sinf(a1) * radius};
+        const float2 v0 = {pos.x + tr_cosf(a0) * radius, pos.y + tr_sinf(a0) * radius};
+        const float2 v1 = {pos.x + tr_cosf(a1) * radius, pos.y + tr_sinf(a1) * radius};
         
         dc->vertices[dc->vertex_count++] = (vertex_t){pos, color};
         dc->vertices[dc->vertex_count++] = (vertex_t){v0, color};
@@ -353,8 +338,8 @@ static void draw_rectangle_rounded(draw_context_t* dc, float2 pos, float2 size, 
 
 float2 rotate(float2 v, float angle)
 {
-    const float c = cosf(angle);
-    const float s = sinf(angle);
+    const float c = tr_cosf(angle);
+    const float s = tr_sinf(angle);
     return (float2){
         v.x * c - v.y * s,
         v.x * s + v.y * c,
@@ -398,8 +383,8 @@ static void draw_circle(draw_context_t* dc, float2 pos, float radius, uint32_t c
     {
         const float a0 = (i * (1.0f / N)) * TR_TWOPI;
         const float a1 = ((i + 1) * (1.0f / N)) * TR_TWOPI;
-        const float2 v0 = {pos.x + cosf(a0) * radius, pos.y + sinf(a0) * radius};
-        const float2 v1 = {pos.x + cosf(a1) * radius, pos.y + sinf(a1) * radius};
+        const float2 v0 = {pos.x + tr_cosf(a0) * radius, pos.y + tr_sinf(a0) * radius};
+        const float2 v1 = {pos.x + tr_cosf(a1) * radius, pos.y + tr_sinf(a1) * radius};
         
         dc->vertices[dc->vertex_count++] = (vertex_t){pos, color};
         dc->vertices[dc->vertex_count++] = (vertex_t){v0, color};
@@ -424,9 +409,9 @@ static void draw_spline_segment_bezier_quadratic(draw_context_t* dc, float2 p1, 
     {
         t = step*(float)i;
 
-        float a = powf(1.0f - t, 2);
+        float a = tr_powf(1.0f - t, 2);
         float b = 2.0f*(1.0f - t)*t;
-        float c = powf(t, 2);
+        float c = tr_powf(t, 2);
 
         // NOTE: The easing functions aren't suitable here because they don't take a control point
         current.y = a*p1.y + b*c2.y + c*p3.y;
@@ -434,7 +419,7 @@ static void draw_spline_segment_bezier_quadratic(draw_context_t* dc, float2 p1, 
 
         float dy = current.y - previous.y;
         float dx = current.x - previous.x;
-        float size = 0.5f*thick/sqrtf(dx*dx+dy*dy);
+        float size = 0.5f*thick/tr_sqrtf(dx*dx+dy*dy);
 
         if (i == 1)
         {

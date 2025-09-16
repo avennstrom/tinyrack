@@ -201,7 +201,7 @@ mergeInto(LibraryManager.library, {
                 //     phase += pd;
                 // }
                 
-                Module._tr_audio_callback(pcm_ptr, audio_blocksize);
+                instanceof.exports._tr_audio_callback(pcm_ptr, audio_blocksize);
                 pcm_buf.set(pcm);
             };
 

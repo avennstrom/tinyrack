@@ -1,9 +1,6 @@
 #include "modules.h"
-#include "platform.h"
 #include "math.h"
-
-#include <math.h>
-#include <string.h>
+#include "stdlib.h"
 
 //
 // tr_vco_t
@@ -16,13 +13,13 @@ void tr_vco_update(tr_vco_t* vco)
         float f = vco->in_v0;
         if (vco->in_voct != NULL)
         {
-            f = vco->in_v0 * powf(2.0f, vco->in_voct[i]);
+            f = vco->in_v0 * tr_powf(2.0f, vco->in_voct[i]);
         }
 
         vco->phase += (f / TR_SAMPLE_RATE) * TR_TWOPI;
-        vco->phase = fmodf(vco->phase, TR_TWOPI);
+        vco->phase = tr_fmodf(vco->phase, TR_TWOPI);
 
-        const float s = sinf(vco->phase);
+        const float s = tr_sinf(vco->phase);
         
         vco->out_sin[i] = s;
         vco->out_sqr[i] = signbit(s) ? 1.0f : -1.0f;
@@ -39,7 +36,7 @@ void tr_clock_update(tr_clock_t* clock)
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
         clock->phase += (clock->in_hz / TR_SAMPLE_RATE) * 1.0f;
-        clock->phase = fmodf(clock->phase, 1.0f);
+        clock->phase = tr_fmodf(clock->phase, 1.0f);
         clock->out_gate[i] = clock->phase < 0.5f ? 1.0f : -1.0f;
     }
 }
@@ -132,7 +129,7 @@ static inline float tr__time_to_coeff(float t_sec)
 {
     // t_sec == 0 → coeff 0 for instant jump
     //if (t_sec <= 0.0f) return 0.0f;
-    float c = expf(-1.0f / (t_sec * (float)TR_SAMPLE_RATE));
+    float c = tr_expf(-1.0f / (t_sec * (float)TR_SAMPLE_RATE));
     // numerical guard
     return float_clamp(c, 0.0f, 1.0f);
 }
@@ -140,10 +137,10 @@ static inline float tr__time_to_coeff(float t_sec)
 static inline float map_knob_exp(float x, float t_min, float t_max, float skew)
 {
     // raise the knob to 'skew' to compress the low end
-    float xs = powf(x, skew);
+    float xs = tr_powf(x, skew);
     // exponential mapping across decades
     float ratio = t_max / fmaxf(t_min, 1e-9f);
-    return t_min * powf(ratio, xs);
+    return t_min * tr_powf(ratio, xs);
 }
 
 #define TR_ADSR_EPSILON (1e-5f)
@@ -187,7 +184,7 @@ void tr_adsr_update(tr_adsr_t* adsr)
                 break;
             case TR_ADSR_STATE_DECAY:
                 value += (adsr->in_sustain - value) * (1.0f - d_coeff);
-                if (fabsf(value - adsr->in_sustain) <= TR_ADSR_EPSILON) {
+                if (tr_fabsf(value - adsr->in_sustain) <= TR_ADSR_EPSILON) {
                     value = adsr->in_sustain;
                     adsr->state = TR_ADSR_STATE_SUSTAIN;
                 }
@@ -242,7 +239,7 @@ static inline float tpt_lp1_process(float* z, float x, float cutoffHz)
     if (cutoffHz > 0.495f * TR_SAMPLE_RATE) cutoffHz = 0.495f * TR_SAMPLE_RATE;
 
     // TPT coefficient: g = tan(pi * fc / fs)
-    const float g = tanf(TR_PI * cutoffHz / TR_SAMPLE_RATE);
+    const float g = tr_tanf(TR_PI * cutoffHz / TR_SAMPLE_RATE);
     const float a = g / (1.0f + g);      // bilinear transform form
 
     // Zero-denormal trick: add tiny dc to break subnormals
@@ -264,9 +261,9 @@ static inline float control_to_hz(float u, float minHz, float maxHz, float fs)
     if (minHz < 0.0f) minHz = 0.0f;
     if (minHz > maxHz) minHz = maxHz;
 
-    const float logMin = logf(fmaxf(minHz, 1e-6f));
-    const float logMax = logf(fmaxf(maxHz, 1e-6f));
-    const float fc = expf(logMin + (logMax - logMin) * u);
+    const float logMin = tr_logf(fmaxf(minHz, 1e-6f));
+    const float logMax = tr_logf(fmaxf(maxHz, 1e-6f));
+    const float fc = tr_expf(logMin + (logMax - logMin) * u);
     return fc;
 }
 
@@ -334,13 +331,13 @@ void tr_mixer_update(tr_mixer_t* mixer)
 
 static inline float tr_onepole_a_from_fc(float fc)
 {
-    return expf(-2.0f * (float)TR_PI * fc / (float)TR_SAMPLE_RATE);
+    return tr_expf(-2.0f * (float)TR_PI * fc / (float)TR_SAMPLE_RATE);
 }
 
 void tr_noise_update(tr_noise_t* noise)
 {
     const float a_red  = tr_onepole_a_from_fc(TR_NOISE_RED_FC_HZ);
-    const float b_red  = sqrtf(fmaxf(0.f, 1.f - a_red*a_red));
+    const float b_red  = tr_sqrtf(fmaxf(0.f, 1.f - a_red*a_red));
     //const float a_hp   = tr_onepole_a_from_fc(TR_NOISE_BLUE_HP_FC_HZ);
     //const float a_tame = tr_onepole_a_from_fc(TR_NOISE_BLUE_TAME_FC_HZ);
 
@@ -384,7 +381,7 @@ static void tr_quantizer_apply_lut(tr_quantizer_t* quantizer, const uint8_t* lut
     {
         const int offset = 12 * 12;
         const float cv = quantizer->in_cv[i];
-        const int note = (int)floorf(cv * 12.0f) + offset;
+        const int note = (int)tr_floorf(cv * 12.0f) + offset;
         const int newnote = (note / 12) * 12 + lut[note % 12] - offset;
         quantizer->out_cv[i] = newnote / 12.0f;
     }
@@ -407,7 +404,7 @@ void tr_quantizer_update(tr_quantizer_t* quantizer)
             for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
             {
                 float cv = quantizer->in_cv[i];
-                cv = floorf(cv * 12.0f) / 12.0f;
+                cv = tr_floorf(cv * 12.0f) / 12.0f;
                 quantizer->out_cv[i] = cv;
             }
             break;
@@ -444,6 +441,6 @@ void tr_random_update(tr_random_t* random)
 
         const float t = (random->sample / (float)TR_SAMPLE_RATE) * random->in_speed;
 
-        random->out_cv[i] = sinf(t) * sinf(t * 3.0f) * sinf(t * 5.0f);
+        random->out_cv[i] = tr_sinf(t) * tr_sinf(t * 3.0f) * tr_sinf(t * 5.0f);
     }
 }

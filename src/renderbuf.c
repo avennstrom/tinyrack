@@ -1,7 +1,5 @@
 #include "renderbuf.h"
-
-#include <math.h>
-#include <string.h>
+#include "stdlib.h"
 
 static void* rb_alloc(render_buffer_t* rb, size_t size)
 {
@@ -66,7 +64,8 @@ void rb_draw_text(render_buffer_t* rb, const char* text, float2 position, float 
     cmd->text_len = (uint32_t)text_len + 1;
     
     char* cmd_text = rb_alloc(rb, text_len + 1);
-    strcpy(cmd_text, text);
+    memcpy(cmd_text, text, text_len);
+    cmd_text[text_len] = '\0';
 }
 
 cmd_draw_spline_t* rb_draw_spline(render_buffer_t* rb)

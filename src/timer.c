@@ -1,16 +1,18 @@
 #include "timer.h"
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/emscripten.h>
+#ifdef PLATFORM_WEB
+
+__attribute__((import_module("env"), import_name("js_now")))
+extern double js_now(void);
 
 void timer_start(timer_t* timer)
 {
-    timer->last = emscripten_get_now();
+    timer->last = js_now();
 }
 
 double timer_reset(timer_t* timer)
 {
-    const double now = emscripten_get_now();
+    const double now = js_now();
     const double elapsed = now - timer->last;
     timer->last = now;
     return elapsed;

@@ -3,7 +3,7 @@
 
 typedef struct timer
 {
-#ifdef __EMSCRIPTEN__
+#ifdef PLATFORM_WEB
     double last;
 #else
     int64_t freq;

@@ -1,12 +1,8 @@
 #include "parser.h"
+#include "stdlib.h"
 #include "modules.reflection.h"
 
 #include <stdbool.h>
-#include <string.h>
-#include <ctype.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <assert.h>
 
 typedef struct tr_tokenizer
 {
@@ -53,7 +49,27 @@ bool tr_advance(tr_tokenizer_t* t)
     return true;
 }
 
-const int ishexdigit(char c)
+static int isspace(char c)
+{
+    return c == ' ';
+}
+
+static int isalpha(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static int isdigit(char c)
+{
+    return (c >= '0' && c <= '9');
+}
+
+static int isalnum(char c)
+{
+    return isalpha(c) || isdigit(c);
+}
+
+static int ishexdigit(char c)
 {
     return 
         (c >= '0' && c <= '9') ||
@@ -61,7 +77,19 @@ const int ishexdigit(char c)
         (c >= 'A' && c <= 'F');
 }
 
-
+int atoi(const char *s)
+{
+	int n=0, neg=0;
+	//while (isspace(*s)) s++;
+	switch (*s) {
+	case '-': neg=1;
+	case '+': s++;
+	}
+	/* Compute n as a negative number to avoid overflow on INT_MIN */
+	while (isdigit(*s))
+		n = 10*n - (*s++ - '0');
+	return neg ? n : -n;
+}
 
 tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
 {
@@ -115,7 +143,7 @@ tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
     }
     else
     {
-        printf("unexpected character: %c\n", t->buf[t->pos]);
+        //printf("unexpected character: %c\n", t->buf[t->pos]);
         assert(0);
         return tr_eof_token;
     }
@@ -124,7 +152,7 @@ tr_token_t tr_next_token_internal(tr_tokenizer_t* t)
 tr_token_t tr_next_token(tr_tokenizer_t* t)
 {
     tr_token_t tok = tr_next_token_internal(t);
-    printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
+    //printf("(%s) %.*s\n", get_token_type_name(&tok), (int)tok.len, t->buf + tok.pos);
     return tok;
 }
 
@@ -136,7 +164,7 @@ int tr_token_strcmp(const char* buf, const tr_token_t* tok, const char* str)
         return -1;
     }
 
-    return strncmp(buf + tok->pos, str, len);
+    return memcmp(buf + tok->pos, str, len);
 }
 
 int tr_token_to_int(const char* buf, const tr_token_t* tok)
