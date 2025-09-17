@@ -18,7 +18,6 @@
             margin: 0;
             background-color: #3c5377;
         }
-
         canvas {
             border: 0px none;
             background-color: #3c5377;
@@ -26,17 +25,6 @@
             margin-left: auto;
             margin-right: auto;
             display: block;
-        }
-
-        #status {
-            color: white;
-            font-size: 40px;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            text-align: center;
-            position: fixed;
-            top: 10%;
-            left: 50%;
-            transform: translate(-50%, -50%);
         }
     </style>
 </head>
@@ -71,87 +59,6 @@
         const vertex_buffer = gl.createBuffer();
         const vao = gl.createVertexArray();
 
-        const vs_color = `#version 300 es
-        uniform mat4 uView;
-        uniform mat4 uProjection;
-        layout(location=0) in vec2 aPos;
-        layout(location=1) in vec4 aColor;
-        out vec4 vColor;
-        void main() {
-            gl_Position = uProjection * uView * vec4(aPos, 0.0, 1.0);
-            vColor = aColor;
-        }
-        `;
-
-        const fs_color = `#version 300 es
-        precision mediump float;
-        in vec4 vColor;
-        out vec4 fragColor;
-        void main() {
-            fragColor = vColor;
-        }
-        `;
-
-        const vs_font = `#version 300 es
-        uniform mat4 uView;
-        uniform mat4 uProjection;
-        layout(location=0) in vec2 aPos;
-        layout(location=1) in vec4 aColor;
-        layout(location=2) in uint aTexcoord;
-        out vec4 vColor;
-        out vec2 vTexcoord;
-        void main() {
-            gl_Position = uProjection * uView * vec4(aPos, 0.0, 1.0);
-            vColor = aColor;
-            uint u = aTexcoord & 0xffffu;
-            uint v = aTexcoord >> 16u;
-            vTexcoord = vec2(u, v);
-        }
-        `;
-
-        const fs_font = `#version 300 es
-        precision mediump float;
-        uniform sampler2D uFont;
-        in vec4 vColor;
-        in vec2 vTexcoord;
-        out vec4 fragColor;
-
-        vec3 hash3(uint x) {
-            x ^= x >> 16u;
-            x *= 0x7feb352du;
-            x ^= x >> 15u;
-            x *= 0x846ca68bu;
-            x ^= x >> 16u;
-            return vec3(
-                float((x * 0x68bc21ebu) & 0x00ffffffu),
-                float((x * 0x02e5be93u) & 0x00ffffffu),
-                float((x * 0x967a889bu) & 0x00ffffffu)
-            ) / float(0x01000000u);
-        }
-
-        float median(float r, float g, float b) {
-            return max(min(r, g), min(max(r, g), b));
-        }
-
-        void main() {
-            //fragColor.rgb = hash3(uint(vTexcoord.x) | (uint(vTexcoord.y) << 16u));
-
-            vec2 uv = (vTexcoord + 0.5) * (1.0 / 208.0);
-            vec3 msdf = texture(uFont, uv).rgb;
-            //fragColor.rg = uv;
-            //fragColor.b = 0.0;
-            //fragColor = vec4(msdf, 1);
-
-            float sd = median(msdf.r, msdf.g, msdf.b);
-
-            // Map signed distance to alpha (0.5 = edge)
-            float w = fwidth(sd);  // screen-space smoothing
-            float alpha = smoothstep(0.5 - w, 0.5 + w, sd);
-
-            fragColor = vec4(vColor.rgb, vColor.a * alpha);
-        }
-        `;
-
         function compile(src, type) {
             const s = gl.createShader(type);
             gl.shaderSource(s, src);
@@ -175,8 +82,8 @@
         }
 
         const programs = [
-            create_program(vs_color, fs_color),
-            create_program(vs_font, fs_font),
+            create_program(`___COLOR_VERT___`, `___COLOR_FRAG___`),
+            create_program(`___FONT_VERT___`, `___FONT_FRAG___`),
         ];
 
         function resize() {
