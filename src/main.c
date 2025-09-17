@@ -92,7 +92,6 @@ typedef struct rack
 
 static uint8_t g_module_pool_memory[64 * 1024 * 1024];
 static uint8_t g_null_module[64 * 1024];
-
 static uint8_t g_rb_memory[1024 * 1024];
 static render_buffer_t g_rb = {g_rb_memory};
 
@@ -250,7 +249,7 @@ typedef struct tr_gui_input
     size_t closest_field[TR_INPUT_TYPE_COUNT];
     tr_input_type_t closest_input;
 
-    tr_cable_draw_command_t cable_draws[1024];
+    tr_cable_draw_command_t cable_draws[TR_MAX_CABLES];
     size_t cable_draw_count;
 
     camera_t camera;
@@ -340,9 +339,7 @@ static float2 tr_snap_to_input(tr_gui_input_t* state, tr_input_type_t input_type
     return in_range ? center : pos;
 }
 
-static tr_gui_input_t g_input = {
-    .camera.zoom = 1.0f,
-};
+static tr_gui_input_t g_input;
 
 typedef struct timer_buffer
 {
@@ -397,7 +394,7 @@ typedef struct app
     timer_buffer_t tb_update_input;
 } app_t;
 
-static app_t g_app = {0};
+static app_t g_app;
 
 static const color_t g_cable_colors[] = 
 {
@@ -1373,15 +1370,10 @@ void tr_draw_cable(float2 a, float2 b, float slack, float thick, color_t color)
 
 static char g_serialization_buffer[1024 * 1024];
 
-__attribute__((import_module("env"), import_name("console_log")))
-extern void console_log(const char* text);
-
 void tr_frame_update_draw(void)
 {
     app_t* app = &g_app;
     rack_t* rack = &app->rack;
-
-    console_log("cock");
 
     tb_start(&app->tb_frame_update_draw);
 
@@ -1508,7 +1500,7 @@ void tr_frame_update_draw(void)
 
     *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
 
-#if 0
+#if 1
     {
         const float2 m = get_mouse_position();
         const float2 mw = get_screen_to_world(m, g_input.camera);
@@ -1530,7 +1522,7 @@ void tr_frame_update_draw(void)
 
     g_input.cable_draw_count = 0;
     
-#if 0
+#if 1
     tb_start(&app->tb_draw_modules);
 
     g_input.do_not_process_input = app->picker_mode;
@@ -1543,6 +1535,7 @@ void tr_frame_update_draw(void)
     tb_stop(&app->tb_draw_modules);
 #endif
 
+#if 1
     for (size_t i = 0; i < g_input.cable_draw_count; ++i)
     {
         const tr_cable_draw_command_t* draw = &g_input.cable_draws[i];
@@ -1559,6 +1552,7 @@ void tr_frame_update_draw(void)
             .color = COLOR_ALPHA(draw->color, 1.0f),
         };
     }
+#endif
 
 #if 0
     for (int i = 0; i < TR_INPUT_TYPE_COUNT; ++i)
@@ -1669,7 +1663,7 @@ void tr_frame_update_draw(void)
         g_input.do_not_process_input = false;
     }
 
-#ifdef __EMSCRIPTEN__
+#ifdef PLATFORM_WEB
     if (!g_app.has_audio_callback_been_called_once)
     {
         const char* message = "Click anywhere to enable audio playback.";
@@ -1689,7 +1683,7 @@ void tr_frame_update_draw(void)
     }
 #endif
 
-#if 0
+#if 1
     {
         struct {const char* name; const timer_buffer_t* tb;} tb_draw_infos[] = {
             {"final_mix", &g_app.tb_produce_final_mix},
@@ -1704,12 +1698,17 @@ void tr_frame_update_draw(void)
         
         for (size_t i = 0; i < tr_countof(tb_draw_infos); ++i)
         {
-            char fmt[64];
             char message[64];
+            {
+                tr_strbuf_t sb = {message};
+                const float avg = tb_avg(tb_draw_infos[i].tb);
+                sb_append_cstring(&sb, tb_draw_infos[i].name);
+                sb_append_cstring(&sb, " ");
+                sb_append_float(&sb, avg);
+                sb_append_cstring(&sb, " ms");
+                sb_terminate(&sb);
+            }
 
-            const float avg = tb_avg(tb_draw_infos[i].tb);
-            sprintf(fmt, "%s: %%1.3f ms", tb_draw_infos[i].name);
-            sprintf(message, fmt, avg);
             const float2 message_size = measure_text(FONT_BERKELY_MONO, message, font_size, 0);
             pos.y -= message_size.y;
             draw_text(FONT_BERKELY_MONO, message, pos, font_size, 0, COLOR_WHITE);
@@ -1937,6 +1936,8 @@ int _start()
         // printf("%s", sb.buf);
     }
 #endif
+
+    g_input.camera.zoom = 1.0f;
 
     const rectangle_t bounds = tr_compute_patch_bounds(rack);
     g_input.camera.target.x = bounds.x + bounds.width * 0.5f;

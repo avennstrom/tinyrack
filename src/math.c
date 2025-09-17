@@ -30,36 +30,66 @@ float tr_fmodf(float x, float y)
     return r;
 }
 
-float tr_expf(float x)
-{
-    // range reduction
-    int i = (int)(x * 1.4426950409f); // 1/ln(2)
-    float f = x - i * 0.69314718056f; // ln(2)
+float tr_expf(float x) {
+    // constants
+    const float LN2 = 0.69314718056f;       // ln(2)
+    const float INV_LN2 = 1.44269504089f;   // 1/ln(2)
 
-    // 2^f ~ 1 + f + f^2/2
-    float r = 1.0f + f + 0.5f * f * f;
+    // reduce: x = k*ln2 + r,  with r in [-ln2/2, ln2/2]
+    int k = (int)(x * INV_LN2);
+    float r = x - k * LN2;
 
-    // scale back by 2^i
-    return r * (1 << i);
+    // approximate e^r with a polynomial (order-3 minimax)
+    // e^r ≈ 1 + r + r^2/2 + r^3/6
+    float r2 = r * r;
+    float r3 = r2 * r;
+    float exp_r = 1.0f + r + 0.5f*r2 + 0.16666667f*r3;
+
+    // reconstruct: exp(x) = 2^k * e^r
+    int32_t bits = (k + 127) << 23;   // build 2^k in IEEE754
+    float two_to_k = *(float*)&bits;
+
+    return two_to_k * exp_r;
 }
 
-// fast logf approximation (valid for x > 0, not too far from 1)
-static inline float fast_logf(float x) {
-    int e = 0;
-    // extract exponent by normalizing
-    while (x > 2.0f) { x *= 0.5f; e++; }
-    while (x < 1.0f) { x *= 2.0f; e--; }
+float tr_exp2f(float x)
+{
+    // Split x into integer and fractional parts
+    int i = (int)x;
+    float f = x - (float)i;
 
-    float y = x - 1.0f;
+    // Polynomial approximation for 2^f, f in [0,1)
+    // minimax cubic fit: 2^f ≈ 1 + f*(0.69314718 + f*(0.24022651 + f*0.05550411))
+    float p = 1.0f + f * (0.69314718f + f * (0.24022651f + f * 0.05550411f));
+
+    // Build 2^i via exponent bits
+    int32_t e = (i + 127) << 23; // IEEE754 bias 127
+    float two_to_i = *(float*)&e; // reinterpret as float
+
+    return two_to_i * p;
+}
+
+float tr_logf(float x) {
+    union { float f; uint32_t i; } v = { x };
+
+    int exp = ((v.i >> 23) & 0xFF) - 127;   // unbiased exponent
+    v.i = (v.i & 0x7FFFFF) | 0x3F800000;    // force mantissa into [1,2)
+
+    float m = v.f;
+    float y = m - 1.0f;
+
+    // log(1+y) ≈ y - y^2/2 + y^3/3
     float y2 = y * y;
-    // log(1+y) ~ y - y^2/2
-    return (y - 0.5f * y2) + e * 0.69314718056f; // ln(2)
+    float y3 = y2 * y;
+    float log_m = y - 0.5f*y2 + (1.0f/3.0f)*y3;
+
+    return (float)exp * 0.69314718056f + log_m;
 }
 
 // simple powf(x, y)
 float tr_powf(float x, float y)
 {
-    return tr_expf(y * fast_logf(x));
+    return tr_expf(y * tr_logf(x));
 }
 
 float tr_roundf(float x)

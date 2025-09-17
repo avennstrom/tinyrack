@@ -18,15 +18,7 @@
 #define TR_SQRT1_2  0.707106781186547524401  // 1/sqrt(2)
 
 static inline float tr_sqrtf(float x) { return __builtin_sqrtf(x); }
-//static inline float tr_powf(float x, float y) { return __builtin_powf(x, y); }
-//static inline float tr_fmodf(float x, float y) { return __builtin_fmodf(x, y); }
 static inline float tr_fabsf(float x) { return __builtin_fabsf(x); }
-//static inline float tr_sinf(float x) { return __builtin_sinf(x); }
-//static inline float tr_cosf(float x) { return __builtin_cosf(x); }
-//static inline float tr_tanf(float x) { return __builtin_tanf(x); }
-//static inline float tr_expf(float x) { return __builtin_expf(x); }
-static inline float tr_logf(float x) { return __builtin_logf(x); }
-//static inline float tr_roundf(float x) { return __builtin_roundf(x); }
 static inline float tr_floorf(float x) { return __builtin_floorf(x); }
 
 float tr_sinf(float x);
@@ -34,6 +26,8 @@ float tr_cosf(float x);
 float tr_tanf(float x);
 float tr_fmodf(float x, float y);
 float tr_expf(float x);
+float tr_exp2f(float x);
+float tr_logf(float x);
 float tr_powf(float x, float y);
 float tr_roundf(float x);
 

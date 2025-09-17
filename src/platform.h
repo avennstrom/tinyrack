@@ -56,3 +56,6 @@ bool is_mouse_button_released(mouse_button_t button);
 bool is_mouse_button_down(mouse_button_t button);
 float2 get_mouse_delta(void);
 float2 get_mouse_wheel_move(void);
+
+__attribute__((import_module("env"), import_name("console_log")))
+extern void console_log(const char* text);

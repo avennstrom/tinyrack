@@ -1,5 +1,10 @@
 #include "strbuf.h"
 
+static inline void sb_append_char(tr_strbuf_t* sb, char c)
+{
+    sb->buf[sb->pos++] = c;
+}
+
 void sb_append_cstring(tr_strbuf_t* sb, const char* str)
 {
     const char* c = str;
@@ -79,30 +84,25 @@ static int is_nan_or_inf(float x)
 
 void sb_append_float(tr_strbuf_t* sb, float x)
 {
-    int precision = 6;
-
-    if (is_nan_or_inf(x))
+    if (x < 0.0f)
     {
-        sb_append_cstring(sb, "0.0");
+        sb_append_char(sb, '-');
+        x = -x;
     }
-    else
+
+    int int_part = (int)x;
+    float frac = x - (float)int_part;
+
+    sb_append_int(sb, int_part);
+
+    sb_append_char(sb, '.');
+
+    for (int i = 0; i < 3; i++)
     {
-        sb_append_int(sb, (int)x);
-
-        x -= (float)(int)x;
-        while (precision-- > 0) {
-            x *= 10.0;
-        }
-
-        sb_append_cstring(sb, ".");
-
-        long long int y = (long long int) x;
-        if (y < 0)
-        {
-            y = -y;
-        }
-
-        sb_append_int(sb, y);
+        frac *= 10.0f;
+        int digit = (int)frac;
+        sb_append_char(sb, '0' + digit);
+        frac -= digit;
     }
 }
 

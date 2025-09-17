@@ -13,7 +13,7 @@ void tr_vco_update(tr_vco_t* vco)
         float f = vco->in_v0;
         if (vco->in_voct != NULL)
         {
-            f = vco->in_v0 * tr_powf(2.0f, vco->in_voct[i]);
+            f = vco->in_v0 * tr_exp2f(vco->in_voct[i]);
         }
 
         vco->phase += (f / TR_SAMPLE_RATE) * TR_TWOPI;
@@ -129,7 +129,7 @@ static inline float tr__time_to_coeff(float t_sec)
 {
     // t_sec == 0 → coeff 0 for instant jump
     //if (t_sec <= 0.0f) return 0.0f;
-    float c = tr_expf(-1.0f / (t_sec * (float)TR_SAMPLE_RATE));
+    float c = tr_exp2f(-1.0f / (t_sec * (float)TR_SAMPLE_RATE));
     // numerical guard
     return float_clamp(c, 0.0f, 1.0f);
 }

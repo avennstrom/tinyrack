@@ -1,7 +1,10 @@
 @echo on
+
 if not exist bin2 mkdir bin2
+
 copy src\index.html bin2
 copy src\audio-processor.js bin2
+copy asset\font.png bin2
 
 set CFLAGS=-std=c23 -Os --target=wasm32 -nostdlib -DPLATFORM_WEB
 
@@ -19,3 +22,5 @@ wasm-ld @exports.txt -o bin2/rack.wasm ^
     obj/main.o obj/modules.o obj/renderbuf.o ^
     obj/stdlib.o obj/strbuf.o obj/platform_web.o ^
     obj/parser.o obj/timer.o obj/math.o
+
+wasm2wat bin2/rack.wasm -o obj/rack.wat

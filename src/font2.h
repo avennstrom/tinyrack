@@ -1,5 +1,5 @@
 #include <stdint.h>
-struct font_glyph {
+static struct font_glyph {
 	uint32_t atlas_left;
 	uint32_t atlas_right;
 	uint32_t atlas_top;

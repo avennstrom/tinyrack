@@ -3,6 +3,7 @@
 #include "math.h"
 #include "stdlib.h"
 #include "font2.h"
+#include "strbuf.h"
 
 #include <float.h>
 
@@ -34,12 +35,9 @@ _Static_assert(sizeof(vertex_t) == 16, "");
 static vertex_t g_vertices[1 * 1024 * 1024];
 static draw_t g_draws[64 * 1024];
 
-__attribute__((import_module("env"), import_name("js_init")))
-extern void js_init(void);
-__attribute__((import_module("env"), import_name("js_render")))
-extern void js_render(const draw_t* draws, uint32_t draw_count, const vertex_t* vertex_data, uint32_t vertex_count);
-__attribute__((import_module("env"), import_name("js_set_cursor")))
-extern void js_set_cursor(int cursor);
+__attribute__((import_module("env"), import_name("js_init")))           extern void js_init(void);
+__attribute__((import_module("env"), import_name("js_render")))         extern void js_render(const draw_t* draws, uint32_t draw_count, const vertex_t* vertex_data, uint32_t vertex_count);
+__attribute__((import_module("env"), import_name("js_set_cursor")))     extern void js_set_cursor(int cursor);
 
 void platform_init(size_t sample_rate, size_t sample_count, platform_audio_callback audio_callback)
 {
@@ -401,17 +399,16 @@ static void draw_spline_segment_bezier_quadratic(draw_context_t* dc, float2 p1, 
 
     float2 previous = p1;
     float2 current = { 0 };
-    float t = 0.0f;
 
     vertex_t* vertices = dc->vertices + dc->vertex_count;
 
     for (int i = 1; i <= SPLINE_SEGMENT_DIVISIONS; i++)
     {
-        t = step*(float)i;
+        const float t = step*(float)i;
 
-        float a = tr_powf(1.0f - t, 2);
+        float a = (1.0f - t) * (1.0f - t);
         float b = 2.0f*(1.0f - t)*t;
-        float c = tr_powf(t, 2);
+        float c = t * t;
 
         // NOTE: The easing functions aren't suitable here because they don't take a control point
         current.y = a*p1.y + b*c2.y + c*p3.y;
@@ -521,6 +518,33 @@ void platform_render(const render_buffer_t* rb)
     for (;;)
     {
         cmd_header_t* header = (cmd_header_t*)ptr;
+
+#if 0
+        const char* cmd_name = "CMD_UNKNOWN";
+        switch (header->type)
+        {
+            case CMD_CAMERA_BEGIN: cmd_name = "CMD_CAMERA_BEGIN"; break;
+            case CMD_CAMERA_END: cmd_name = "CMD_CAMERA_END"; break;
+            case CMD_DRAW_RECTANGLE: cmd_name = "CMD_DRAW_RECTANGLE"; break;
+            case CMD_DRAW_RECTANGLE_ROUNDED: cmd_name = "CMD_DRAW_RECTANGLE_ROUNDED"; break;
+            case CMD_DRAW_CIRCLE: cmd_name = "CMD_DRAW_CIRCLE"; break;
+            case CMD_DRAW_TEXT: cmd_name = "CMD_DRAW_TEXT"; break;
+            case CMD_DRAW_SPLINE: cmd_name = "CMD_DRAW_SPLINE"; break;
+            case CMD_DRAW_LINE_STRIP: cmd_name = "CMD_DRAW_LINE_STRIP"; break;
+            case CMD_EOF: cmd_name = "CMD_EOF"; break;
+        }
+        console_log(cmd_name);
+
+        {
+            char msg[128];
+            tr_strbuf_t sb = {msg};
+            sb_append_cstring(&sb, "dc->vertex_count: ");
+            sb_append_int(&sb, (int)dc.vertex_count);
+            sb_terminate(&sb);
+            console_log(msg);
+        }
+#endif
+
         if (header->type == CMD_EOF)
         {
             break;
