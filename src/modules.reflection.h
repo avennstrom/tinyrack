@@ -141,16 +141,16 @@ enum tr_module_field_type
 
 typedef struct tr_module_field_info
 {
-    enum tr_module_field_type type;
+    uint8_t type; // enum tr_module_field_type
     uintptr_t offset;
     const char* name;
-    int x;
-    int y;
+    int16_t x;
+    int16_t y;
     float min;
     float max;
     float default_value;
-    int min_int;
-    int max_int;
+    int16_t min_int;
+    int16_t max_int;
 } tr_module_field_info_t;
 
 static const tr_module_field_info_t tr_vco__fields[TR_VCO_FIELD_COUNT] = {
@@ -259,7 +259,7 @@ typedef struct tr_module_info
     const char* id;
     size_t struct_size;
     const tr_module_field_info_t* fields;
-    size_t field_count;
+    uint8_t field_count;
     int width;
     int height;
 } tr_module_info_t;
