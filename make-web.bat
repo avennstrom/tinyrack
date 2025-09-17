@@ -1,10 +1,10 @@
 @echo on
 
-if not exist bin2 mkdir bin2
+if not exist bin mkdir bin
 
-copy src\index.html bin2
-copy src\audio-processor.js bin2
-copy asset\font.png bin2
+copy src\index.html bin
+copy src\audio-processor.js bin
+copy asset\font.png bin
 
 set CFLAGS=-std=c23 -Os --target=wasm32 -nostdlib -DPLATFORM_WEB
 
@@ -18,11 +18,11 @@ clang %CFLAGS% -o obj/parser.o -c src/parser.c
 clang %CFLAGS% -o obj/timer.o -c src/timer.c
 clang %CFLAGS% -o obj/math.o -c src/math.c
 
-wasm-ld @exports.txt -o bin2/rack.wasm ^
+wasm-ld @exports.txt -o bin/rack.wasm ^
     obj/main.o obj/modules.o obj/renderbuf.o ^
     obj/stdlib.o obj/strbuf.o obj/platform_web.o ^
     obj/parser.o obj/timer.o obj/math.o
 
-wasm2wat bin2/rack.wasm -o obj/rack.wat
+wasm2wat bin/rack.wasm -o obj/rack.wat
 
-wasm-objdump -s bin2\rack.wasm > obj\rack-dump.txt
+wasm-objdump -s bin\rack.wasm > obj\rack-dump.txt

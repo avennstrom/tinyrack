@@ -8,5 +8,5 @@ class CORSRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 if __name__ == "__main__":
-    os.chdir("bin2")
+    os.chdir("bin")
     HTTPServer(("localhost", 8000), CORSRequestHandler).serve_forever()
