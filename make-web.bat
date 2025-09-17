@@ -6,6 +6,8 @@ copy src\index.html bin
 copy src\audio-processor.js bin
 copy asset\font.png bin
 
+python fontgen.py
+
 set CFLAGS=-std=c23 -Os --target=wasm32 -nostdlib -DPLATFORM_WEB
 
 clang %CFLAGS% -o obj/main.o -c src/main.c

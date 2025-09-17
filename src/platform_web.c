@@ -2,7 +2,7 @@
 #include "config.h"
 #include "math.h"
 #include "stdlib.h"
-#include "font2.h"
+#include "font.h"
 #include "strbuf.h"
 
 #include <float.h>
@@ -34,6 +34,7 @@ _Static_assert(sizeof(vertex_t) == 16, "");
 
 static vertex_t g_vertices[1 * 1024 * 1024];
 static draw_t g_draws[64 * 1024];
+static uint8_t g_font_glyph_map[256];
 
 __attribute__((import_module("env"), import_name("js_init")))           extern void js_init(void);
 __attribute__((import_module("env"), import_name("js_render")))         extern void js_render(const draw_t* draws, uint32_t draw_count, const vertex_t* vertex_data, uint32_t vertex_count);
@@ -41,7 +42,11 @@ __attribute__((import_module("env"), import_name("js_set_cursor")))     extern v
 
 void platform_init(size_t sample_rate, size_t sample_count, platform_audio_callback audio_callback)
 {
-    js_init();
+    memset(g_font_glyph_map, 0xff, sizeof(g_font_glyph_map));
+    for (size_t i = 0; i < tr_countof(g_font_glyphs); ++i)
+    {
+        g_font_glyph_map[g_font_glyphs[i].glyph] = (uint8_t)i;
+    }
 }
 
 struct 
@@ -466,16 +471,14 @@ static void draw_text(draw_context_t* dc, const char* text, float2 position, flo
     {
         const char c = text[i];
         assert(c >= 0 && c < tr_countof(g_font_glyphs));
-        const struct font_glyph* glyph = &g_font_glyphs[c];
-
-        if (glyph->atlas_left == 0 && 
-            glyph->atlas_right == 0 &&
-            glyph->atlas_top == 0 &&
-            glyph->atlas_bottom == 0)
+        const uint8_t glyph_index = g_font_glyph_map[c];
+        if (glyph_index == 0xff)
         {
             cursor.x += g_font_advance * charsize;
             continue;
         }
+
+        const struct font_glyph* glyph = &g_font_glyphs[glyph_index];
 
         const float pl = glyph->plane_left * charsize;
         const float pr = glyph->plane_right * charsize;
