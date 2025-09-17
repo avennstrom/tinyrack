@@ -24,3 +24,5 @@ wasm-ld @exports.txt -o bin2/rack.wasm ^
     obj/parser.o obj/timer.o obj/math.o
 
 wasm2wat bin2/rack.wasm -o obj/rack.wat
+
+wasm-objdump -s bin2\rack.wasm > obj\rack-dump.txt
