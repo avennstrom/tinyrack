@@ -3,9 +3,9 @@
 
 <head>
     <meta charset="utf-8">
-    <link rel="preload" href="rack.wasm" as="fetch" type="application/wasm">
+    <link rel="preload" href="rack.wasm" as="fetch" type="application/wasm" crossorigin>
     <link rel="preload" href="font.png" as="image" type="image/png">
-    <link rel="preload" href="audio-processor.js" as="script">
+    <link rel="preload" href="audio-processor.js" as="audioworklet" crossorigin>
     <title>rack.fm</title>
     <script>
         const wasmFetch = fetch('rack.wasm');
