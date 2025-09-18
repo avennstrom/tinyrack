@@ -2,7 +2,6 @@
 
 if not exist bin mkdir bin
 
-copy asset\font.png bin
 copy asset\font.webp bin
 
 minify -o obj\audio-processor.js src\audio-processor.js
@@ -34,6 +33,8 @@ wasm-ld @exports.txt -o bin/rack.wasm ^
     obj/stdlib.o obj/strbuf.o obj/platform_web.o ^
     obj/parser.o obj/timer.o obj/math.o
 
-wasm2wat bin/rack.wasm -o obj/rack.wat
+wasm-strip bin/rack.wasm
 
+rem For debugging
+wasm2wat bin/rack.wasm -o obj/rack.wat
 wasm-objdump -s bin\rack.wasm > obj\rack-dump.txt
