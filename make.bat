@@ -2,15 +2,18 @@
 
 if not exist bin mkdir bin
 
-copy src\audio-processor.js bin
 copy asset\font.png bin
 copy asset\font.webp bin
+
+minify -o obj\audio-processor.js src\audio-processor.js
 
 shader_minifier --format text --preserve-externals -o obj\color.vert .\src\shaders\color.vert
 shader_minifier --format text --preserve-externals -o obj\color.frag .\src\shaders\color.frag
 shader_minifier --format text --preserve-externals -o obj\font.vert .\src\shaders\font.vert
 shader_minifier --format text --preserve-externals -o obj\font.frag .\src\shaders\font.frag
+
 python htmlgen.py
+minify -o bin\index.html obj\index.html
 
 python fontgen.py
 

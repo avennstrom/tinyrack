@@ -5,13 +5,7 @@
     <meta charset="utf-8">
     <link rel="preload" href="rack.wasm" as="fetch" type="application/wasm" crossorigin>
     <link rel="preload" href="font.webp" as="image" type="image/webp">
-    <link rel="preload" href="audio-processor.js" as="audioworklet" crossorigin>
     <title>rack.fm</title>
-    <script>
-        const wasmFetch = fetch('rack.wasm');
-        const audioCtx = new AudioContext({ sampleRate: 48000 });
-        const workletPromise = audioCtx.audioWorklet.addModule("audio-processor.js");
-    </script>
     <style>
         body {
             padding: 0;
@@ -33,6 +27,12 @@
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
 
     <script>
+        const wasmFetch = fetch('rack.wasm');
+        const audioCtx = new AudioContext({ sampleRate: 48000 });
+        const blob = new Blob([`___AUDIO_PROCESSOR___`], {type: "application/javascript"});
+        const url = URL.createObjectURL(blob);
+        const workletPromise = audioCtx.audioWorklet.addModule(url);
+
         let gl = canvas.getContext("webgl2", { antialias: true });
 
         var instance = null;
@@ -237,8 +237,8 @@
             const audio_bufcount = 8; // how many 128-sample blocks to buffer
             const node = new AudioWorkletNode(audioCtx, "rack", {
                 processorOptions: {
-                    pcm_sab: new SharedArrayBuffer(4 * audio_blocksize * audio_bufcount),
-                    bufcount: audio_bufcount,
+                    sab: new SharedArrayBuffer(4 * audio_blocksize * audio_bufcount),
+                    count: audio_bufcount,
                 },
             });
             node.connect(audioCtx.destination);

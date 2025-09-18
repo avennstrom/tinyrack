@@ -12,6 +12,7 @@ Prerequisites:
 * Clang (clang + wasm-ld) - https://clang.llvm.org/get_started.html
 * shader_minifier - https://github.com/laurentlb/shader-minifier
 * WABT (wasm2wat + wasm-objdump) - https://github.com/WebAssembly/wabt
+* minify - https://github.com/tdewolff/minify
 
 Run the make.bat script to build the project. 
 ```
