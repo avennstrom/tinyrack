@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <link rel="preload" href="rack.wasm" as="fetch" type="application/wasm" crossorigin>
-    <link rel="preload" href="font.png" as="image" type="image/png">
+    <link rel="preload" href="font.webp" as="image" type="image/webp">
     <link rel="preload" href="audio-processor.js" as="audioworklet" crossorigin>
     <title>rack.fm</title>
     <script>
@@ -40,7 +40,7 @@
         let font_texture = null;
 
         const image = new Image();
-        image.src = "font.png";
+        image.src = "font.webp";
         image.onload = () => {
             const tex = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, tex);

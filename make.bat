@@ -2,9 +2,9 @@
 
 if not exist bin mkdir bin
 
-rem copy src\index.html bin
 copy src\audio-processor.js bin
 copy asset\font.png bin
+copy asset\font.webp bin
 
 shader_minifier --format text --preserve-externals -o obj\color.vert .\src\shaders\color.vert
 shader_minifier --format text --preserve-externals -o obj\color.frag .\src\shaders\color.frag
