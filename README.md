@@ -8,7 +8,10 @@ https://github.com/user-attachments/assets/3409c658-f9ec-434b-8252-e1e96a088131
 
 Prerequisites:
 * Windows
-* Visual Studio 2019
+* python3
+* Clang (clang + wasm-ld) - https://clang.llvm.org/get_started.html
+* shader_minifier - https://github.com/laurentlb/shader-minifier
+* WABT (wasm2wat + wasm-objdump) - https://github.com/WebAssembly/wabt
 
 Run the make.bat script to build the project. 
 ```
