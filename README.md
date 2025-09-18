@@ -18,3 +18,13 @@ Run the make.bat script to build the project.
 ```
 > make.bat
 ```
+
+Use any web server to serve the contents of the `bin` directory.
+
+```
+> dir /b bin
+font.webp
+index.html
+rack.wasm
+```
+
