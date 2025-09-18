@@ -20,11 +20,13 @@ Run the make.bat script to build the project.
 ```
 
 Use any web server to serve the contents of the `bin` directory.
-
 ```
-> dir /b bin
-font.webp
-index.html
-rack.wasm
+bin/font.webp
+bin/index.html
+bin/rack.wasm
 ```
 
+The provided python script works well during development.
+```
+> python serve.py
+```
