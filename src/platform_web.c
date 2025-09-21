@@ -63,6 +63,8 @@ struct
     float mouse_wheel_delta_y;
     int mouse_buttons[2];
     int mouse_buttons_prev[2];
+    int keys[256];
+    int keys_prev[256];
 } input;
 
 mouse_button_t js_mouse_button(int js_button)
@@ -104,6 +106,16 @@ void js_mousewheel(float x, float y)
 {
     input.mouse_wheel_x += x;
     input.mouse_wheel_y -= y;
+}
+
+void js_keydown(int key)
+{
+    input.keys[key] = 1;
+}
+
+void js_keyup(int key)
+{
+    input.keys[key] = 0;
 }
 
 typedef struct draw_context
@@ -632,6 +644,7 @@ void platform_render(const render_buffer_t* rb)
     input.mouse_wheel_y = 0.0f;
     input.mouse_buttons_prev[0] = input.mouse_buttons[0];
     input.mouse_buttons_prev[1] = input.mouse_buttons[1];
+    memcpy(input.keys_prev, input.keys, sizeof(input.keys));
 }
 
 float2 get_screen_size(void)
@@ -674,12 +687,12 @@ void platform_set_cursor(cursor_t cursor)
 // input
 bool is_key_pressed(keyboard_key_t key)
 {
-    return false;
+    return input.keys[key] && !input.keys_prev[key];
 }
 
 bool is_key_down(keyboard_key_t key)
 {
-    return false;
+    return input.keys[key];
 }
 
 bool is_mouse_button_pressed(mouse_button_t button)

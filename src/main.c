@@ -70,8 +70,8 @@ typedef struct tr_gui_module
 
 typedef struct tr_output_plug
 {
-    float x, y;
     const tr_gui_module_t* module;
+    const tr_module_field_info_t* field;
 } tr_output_plug_t;
 
 typedef struct tr_input_plug
@@ -237,11 +237,16 @@ typedef struct tr_gui_input
 {
     void* active_value;
     float active_int; // for int knob
+
     tr_gui_module_t* drag_module;
     float2 drag_offset;
+
     const float** drag_input;
     const float* drag_output;
+    const tr_gui_module_t* drag_io_module; // module that the drag_input/drag_output belongs to
+    const tr_module_field_info_t* drag_field;
     color_t drag_color;
+
     bool do_not_process_input;
     
     float closest_distance[TR_INPUT_TYPE_COUNT];
@@ -548,12 +553,12 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
         const tr_module_info_t* module_info = &tr_module_infos[module->type];
         for (size_t field_index = 0; field_index < module_info->field_count; ++field_index)
         {
-            if (module_info->fields[field_index].type == TR_MODULE_FIELD_BUFFER)
+            const tr_module_field_info_t* field_info = &module_info->fields[field_index];
+            if (field_info->type == TR_MODULE_FIELD_BUFFER)
             {
-                const tr_output_plug_t p = {cmd->x, cmd->y, module};
                 float* field_addr = get_field_address(module, field_index);
                 const int output_plug_idx = tr_hmput(rack->output_plugs_key, field_addr);
-                rack->output_plugs[output_plug_idx] = p;
+                rack->output_plugs[output_plug_idx] = (tr_output_plug_t){module, field_info};
             }
         }
     }
@@ -578,9 +583,8 @@ void tr_rack_deserialize(rack_t* rack, const char* input, size_t len)
                 //*(float**)field_addr = (float*)target_field_addr;
                 memcpy(field_addr, &target_field_addr, sizeof(void*));
 
-                const tr_input_plug_t plug = {tr_random_cable_color()};
                 const int input_plug_idx = tr_hmput(rack->input_plugs_key, field_addr);
-                rack->input_plugs[input_plug_idx] = plug;
+                rack->input_plugs[input_plug_idx] = (tr_input_plug_t){tr_random_cable_color()};
                 break;
         }
     }
@@ -830,7 +834,7 @@ static void tr_gui_plug_input(rack_t* rack, const tr_gui_module_t* module, size_
 
         g_input.cable_draws[g_input.cable_draw_count++] = (tr_cable_draw_command_t){
             .from = center,
-            .to = {(float)output_plug->x, (float)output_plug->y},
+            .to = {output_plug->module->x + output_plug->field->x, output_plug->module->y + output_plug->field->y},
             .color = input_plug->color,
         };
     }
@@ -898,10 +902,6 @@ static void tr_gui_plug_output(rack_t* rack, const tr_gui_module_t* module, size
             .color = g_input.drag_color,
         };
     }
-    
-    const tr_output_plug_t plug = {x, y, module};
-    const int output_plug_idx = tr_hmput(rack->output_plugs_key, buffer);
-    rack->output_plugs[output_plug_idx] = plug;
 }
 
 void tr_led(float x, float y, color_t color)
@@ -1396,17 +1396,21 @@ void tr_frame_update_draw(void)
         g_input.camera.zoom = float_clamp(g_input.camera.zoom, 0.2f, 4.0f);
     }
 
-    if (is_key_down(PL_KEY_LEFT_CONTROL) && is_key_pressed(PL_KEY_S))
+    if (is_key_down(PL_KEY_CTRL) && is_key_pressed(PL_KEY_S))
     {
         tr_strbuf_t sb = {g_serialization_buffer};
         tr_rack_serialize(&sb, rack);
         //printf("%.*s", (int)sb.pos, sb.buf);
     }
 
+#if 0
     if (is_key_pressed(PL_KEY_TAB))
     {
         app->picker_mode = !app->picker_mode;
     }
+#else
+    app->picker_mode = is_key_down(PL_KEY_TAB) && g_input.drag_module == NULL && g_input.drag_input == NULL && g_input.drag_output == NULL;
+#endif
 
     if (is_key_pressed(PL_KEY_SPACE))
     {
@@ -1433,6 +1437,7 @@ void tr_frame_update_draw(void)
             {
                 const float** input = get_field_address(module, field);
 
+#if 0 // don't think this is good UX
                 if (*input != NULL)
                 {
                     const int input_plug_idx = tr_hmget(rack->input_plugs_key, input);
@@ -1444,8 +1449,11 @@ void tr_frame_update_draw(void)
                     *input = NULL;
                 }
                 else
+#endif
                 {
                     g_input.drag_input = input;
+                    g_input.drag_io_module = module;
+                    g_input.drag_field = &tr_module_infos[module->type].fields[field];
                     g_input.drag_color = tr_random_cable_color();
                 }
             }
@@ -1454,6 +1462,8 @@ void tr_frame_update_draw(void)
                 const float* output = get_field_address(module, field);
 
                 g_input.drag_output = output;
+                g_input.drag_io_module = module;
+                g_input.drag_field = &tr_module_infos[module->type].fields[field];
                 g_input.drag_color = tr_random_cable_color();
             }
         }
@@ -1577,33 +1587,37 @@ void tr_frame_update_draw(void)
         {
             if (g_input.closest_distance[TR_INPUT_TYPE_OUTPUT_PLUG] < 0.0f)
             {
-                const tr_gui_module_t* module = g_input.closest_module[TR_INPUT_TYPE_OUTPUT_PLUG];
-                const size_t field_index = g_input.closest_field[TR_INPUT_TYPE_OUTPUT_PLUG];
-                const float* output = get_field_address(module, field_index);
+                const tr_gui_module_t* drop_module = g_input.closest_module[TR_INPUT_TYPE_OUTPUT_PLUG];
+                const size_t drop_field_index = g_input.closest_field[TR_INPUT_TYPE_OUTPUT_PLUG];
+                const float* output = get_field_address(drop_module, drop_field_index);
 
-                const tr_input_plug_t plug = {g_input.drag_color};
                 const int input_plug_idx = tr_hmput(rack->input_plugs_key, g_input.drag_input);
-                rack->input_plugs[input_plug_idx] = plug;
+                rack->input_plugs[input_plug_idx] = (tr_input_plug_t){g_input.drag_color};
+                const int output_plug_idx = tr_hmput(rack->output_plugs_key, output);
+                rack->output_plugs[output_plug_idx] = (tr_output_plug_t){drop_module, &tr_module_infos[drop_module->type].fields[drop_field_index]};
                 *g_input.drag_input = output;
             }
+#if 0
             else
             {
                 *g_input.drag_input = NULL;
             }
+#endif
         }
 
         if (g_input.drag_output != NULL)
         {
             if (g_input.closest_distance[TR_INPUT_TYPE_INPUT_PLUG] < 0.0f)
             {
-                const tr_gui_module_t* module = g_input.closest_module[TR_INPUT_TYPE_INPUT_PLUG];
-                const size_t field_index = g_input.closest_field[TR_INPUT_TYPE_INPUT_PLUG];
-                const float** input = get_field_address(module, field_index);
+                const tr_gui_module_t* drop_module = g_input.closest_module[TR_INPUT_TYPE_INPUT_PLUG];
+                const size_t drop_field_index = g_input.closest_field[TR_INPUT_TYPE_INPUT_PLUG];
+                const float** drop_input = get_field_address(drop_module, drop_field_index);
 
-                const tr_input_plug_t plug = {g_input.drag_color};
-                const int input_plug_idx = tr_hmput(rack->input_plugs_key, input);
-                rack->input_plugs[input_plug_idx] = plug;
-                *input = g_input.drag_output;
+                const int input_plug_idx = tr_hmput(rack->input_plugs_key, drop_input);
+                rack->input_plugs[input_plug_idx] = (tr_input_plug_t){g_input.drag_color};
+                const int output_plug_idx = tr_hmput(rack->output_plugs_key, g_input.drag_output);
+                rack->output_plugs[output_plug_idx] = (tr_output_plug_t){g_input.drag_io_module, g_input.drag_field};
+                *drop_input = g_input.drag_output;
             }
         }
 
@@ -1611,6 +1625,8 @@ void tr_frame_update_draw(void)
         g_input.drag_module = NULL;
         g_input.drag_input = NULL;
         g_input.drag_output = NULL;
+        g_input.drag_io_module = NULL;
+        g_input.drag_field = NULL;
     }
 
     if (app->picker_mode)

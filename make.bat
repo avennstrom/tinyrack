@@ -13,6 +13,7 @@ shader_minifier --format text --preserve-externals -o obj\font.frag .\src\shader
 
 python htmlgen.py
 minify -o bin\index.html obj\index.html
+copy obj\index.html bin\index.dev.html
 
 python fontgen.py
 

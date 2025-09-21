@@ -3,6 +3,8 @@
 --export=js_mousedown
 --export=js_mouseup
 --export=js_mousewheel
+--export=js_keydown
+--export=js_keyup
 --export=pcm_alloc
 --export=tr_audio_callback
 --export=tr_frame_update_draw

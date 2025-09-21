@@ -27,13 +27,10 @@
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
 
     <script>
-        const wasmFetch = fetch('rack.wasm');
-        const audioCtx = new AudioContext({ sampleRate: 48000 });
-        const blob = new Blob([`___AUDIO_PROCESSOR___`], {type: "application/javascript"});
-        const url = URL.createObjectURL(blob);
-        const workletPromise = audioCtx.audioWorklet.addModule(url);
-
+        let t0 = performance.now();
         let gl = canvas.getContext("webgl2", { antialias: true });
+        let t1 = performance.now();
+        console.log(`webgl2: ${t1 - t0} ms`);
 
         var instance = null;
 
@@ -199,14 +196,14 @@
         };
 
         (async () => {
-            const wasm = await WebAssembly.instantiateStreaming(wasmFetch, imports);
+            const wasm = await WebAssembly.instantiateStreaming(fetch('rack.wasm'), imports);
             instance = wasm.instance;
             instance.exports._start();
             instance.exports.js_canvas_size(canvas.width, canvas.height);
 
             window.addEventListener('mousedown', (ev) => {
                 instance.exports.js_mousedown(ev.button);
-                audioCtx.resume();
+                if (audioCtx) audioCtx.resume();
             });
             window.addEventListener('mouseup', (ev) => {
                 instance.exports.js_mouseup(ev.button);
@@ -215,10 +212,11 @@
                 instance.exports.js_mousemove(ev.clientX, ev.clientY);
             });
             window.addEventListener('keydown', (ev) => {
-                //console.log('down: ' + ev.key);
+                if (ev.key === "Tab") ev.preventDefault();
+                instance.exports.js_keydown(ev.keyCode);
             });
             window.addEventListener('keyup', (ev) => {
-                //console.log('up: ' + ev.key);
+                instance.exports.js_keyup(ev.keyCode);
             });
             window.addEventListener('wheel', (ev) => {
                 //console.log('wheel: ' + ev.deltaY);
@@ -232,9 +230,11 @@
 
             window.requestAnimationFrame(frame);
 
-            await workletPromise;
             const audio_blocksize = 128;
             const audio_bufcount = 8; // how many 128-sample blocks to buffer
+
+            const audioCtx = new AudioContext({ sampleRate: 48000 });
+            await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`___AUDIO_PROCESSOR___`], {type: "application/javascript"})));
             const node = new AudioWorkletNode(audioCtx, "rack", {
                 processorOptions: {
                     sab: new SharedArrayBuffer(4 * audio_blocksize * audio_bufcount),
