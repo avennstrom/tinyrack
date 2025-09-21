@@ -1,4 +1,4 @@
-# tinyrack
+# tinyrack - [rack.fm](https://rack.fm/)
 
 Modular synthesizer emulator.
 
