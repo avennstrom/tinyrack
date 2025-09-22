@@ -33,7 +33,7 @@ The provided python script works well during development.
 
 ## Architecture
 
-Each module is made up of N inputs, internal state, M outputs. The VCO (Voltage Controlled Oscillator) is the simplest example:
+Each module is made up of **inputs**, **internal state**, and **outputs**. The VCO (Voltage Controlled Oscillator) is the simplest example:
 
 ```c
 typedef struct tr_vco
@@ -63,9 +63,9 @@ The connections between modules form an implicit dependency graph. The applicati
 
 ```
                                                           \
-+-----+     +-----+     +-----+     +-----------+       \  |
-| VCO | --> | VCF | --> | VCA | --> |  Speaker  | --> ) |  |
-+-----+     +-----+     +-----+     +-----------+       /  |
++-----+     +-----+     +-----+     +---------+       \  |
+| VCO | --> | VCF | --> | VCA | --> | Speaker | --> ) |  |
++-----+     +-----+     +-----+     +---------+       /  |
                |                                          /
                v
         +--------------+
