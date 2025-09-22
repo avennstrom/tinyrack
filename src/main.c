@@ -1510,7 +1510,7 @@ void tr_frame_update_draw(void)
 
     *rb_camera_begin(&g_rb) = (cmd_camera_begin_t){g_input.camera};
 
-#if 1
+#if 0
     {
         const float2 m = get_mouse_position();
         const float2 mw = get_screen_to_world(m, g_input.camera);
