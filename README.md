@@ -2,6 +2,8 @@
 
 Modular synthesizer emulator.
 
+⚠️ Work in progress! ⚠️
+
 https://github.com/user-attachments/assets/3409c658-f9ec-434b-8252-e1e96a088131
 
 ## Building
