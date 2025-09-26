@@ -21,11 +21,23 @@
             margin-right: auto;
             display: block;
         }
+        #github {
+            position: fixed;
+            left: 16px;
+            top: 16px;
+        }
+        #github img {
+            width: 64px;
+            height: 64px;
+        }
     </style>
 </head>
 
 <body>
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
+    <a id="github" href="https://github.com/avennstrom/tinyrack" title="Check out the source code on GitHub!" target="_blank">
+        <img src="github.svg" alt="GitHub Logo">
+    </a>
 
     <script>
         let t0 = performance.now();
