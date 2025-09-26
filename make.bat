@@ -3,6 +3,7 @@
 if not exist bin mkdir bin
 
 copy asset\font.webp bin
+copy asset\favicon.svg bin
 
 minify -o obj\audio-processor.js src\audio-processor.js
 
