@@ -33,12 +33,16 @@ void tr_vco_update(tr_vco_t* vco)
 
 void tr_clock_update(tr_clock_t* clock)
 {
+    float phase = clock->phase;
+    
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
-        clock->phase += (clock->in_hz / TR_SAMPLE_RATE) * 1.0f;
-        clock->phase = tr_fmodf(clock->phase, 1.0f);
-        clock->out_gate[i] = clock->phase < 0.5f ? 1.0f : -1.0f;
+        phase += (clock->in_hz / TR_SAMPLE_RATE) * 1.0f;
+        phase = tr_fmodf(phase, 1.0f);
+        clock->out_gate[i] = phase < 0.5f ? 1.0f : -1.0f;
     }
+
+    clock->phase = phase;
 }
 
 //
@@ -56,10 +60,7 @@ void tr_clockdiv_update(tr_clockdiv_t* clockdiv)
         const int edge = g && g != gate;
         gate = g;
         
-        if (edge)
-        {
-            state = (state + 1) & 0xff;
-        }
+        state = (state + edge) & 0xff;
         
         clockdiv->out_0[i] = (state & 0b00000001) ? 1.0f : -1.0f;
         clockdiv->out_1[i] = (state & 0b00000010) ? 1.0f : -1.0f;
@@ -343,8 +344,8 @@ void tr_noise_update(tr_noise_t* noise)
 
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
-        noise->rng = noise->rng * 1664525u + 1013904223u;
-        const float w = (noise->rng / (float)UINT32_MAX) * 2.0f - 1.0f;
+        noise->rng = (uint32_t)noise->rng * 1664525u + 1013904223u;
+        const float w = ((uint32_t)noise->rng / (float)UINT32_MAX) * 2.0f - 1.0f;
 
         noise->red_state = a_red * noise->red_state + b_red * w;
 
@@ -437,10 +438,10 @@ void tr_random_update(tr_random_t* random)
 {
     for (size_t i = 0; i < TR_SAMPLE_COUNT; ++i)
     {
-        ++random->sample;
+        random->t0 = tr_fmodf(random->t0 + random->in_speed, TR_TWOPI);
+        random->t1 = tr_fmodf(random->t1 + random->in_speed * 3.1534324234f, TR_TWOPI);
+        random->t2 = tr_fmodf(random->t2 + random->in_speed * 5.333223f, TR_TWOPI);
 
-        const float t = (random->sample / (float)TR_SAMPLE_RATE) * random->in_speed;
-
-        random->out_cv[i] = tr_sinf(t) * tr_sinf(t * 3.0f) * tr_sinf(t * 5.0f);
+        random->out_cv[i] = tr_sinf(random->t0) * tr_sinf(random->t1) * tr_sinf(random->t2);
     }
 }

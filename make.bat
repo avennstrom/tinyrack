@@ -1,5 +1,8 @@
 @echo on
 
+clang -o modcc.exe modcc/modcc.c -D_CRT_SECURE_NO_WARNINGS -Wno-deprecated-declarations
+modcc.exe
+
 if not exist bin mkdir bin
 
 copy asset\font.webp bin

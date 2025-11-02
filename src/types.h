@@ -1,6 +1,16 @@
 #pragma once
 
+#include "config.h"
+
 #include <stdint.h>
+
+#ifndef TR_MODULE
+#define TR_MODULE(...)
+#define TR_FIELD(...)
+#endif
+
+typedef float tr_buf[TR_SAMPLE_COUNT];
+typedef const float* tr_input;
 
 typedef struct float2 {
     float x;

@@ -1,6 +1,5 @@
 #include "timer.h"
 #include "modules.h"
-#include "modules.reflection.h"
 #include "parser.h"
 #include "platform.h"
 #include "math.h"
@@ -938,6 +937,16 @@ void tr_seq8_decorate(tr_seq8_t* seq8, tr_gui_module_t* module)
         tr_led(module->x + field->x, module->y + field->y + TR_KNOB_RADIUS + 8, seq8->step == i ? COLOR_LED_ON : COLOR_LED_OFF);
     }
 }
+
+static const char* g_tr_quantizer_mode_name[] = {
+    "chromatic",
+    "minor",
+    "minor triad",
+    "major",
+    "major triad",
+    "pentatonic",
+    "blues",
+};
 
 void tr_quantizer_decorate(tr_quantizer_t* quantizer, tr_gui_module_t* module)
 {

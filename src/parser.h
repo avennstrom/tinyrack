@@ -1,6 +1,6 @@
 #pragma once
 
-#include "modules.h"
+#include "modules.generated.h"
 
 #include <stddef.h>
 #include <stdint.h>

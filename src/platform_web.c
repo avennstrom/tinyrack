@@ -75,6 +75,8 @@ mouse_button_t js_mouse_button(int js_button)
         case 2: return PL_MOUSE_BUTTON_RIGHT;
         default: assert(0);
     }
+
+    return 0;
 }
 
 static int canvas_w = 240;
